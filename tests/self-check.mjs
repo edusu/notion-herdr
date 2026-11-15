@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { client, upload, serial, titleOf, refreshDecision, pages, ago, pageUrl, readable, mappedPage, sourceNames, canonicalId } from "../mods/notion-notes/notion.js";
+import { parseBlocks, todos, toggleTodo } from "../mods/notion-notes/blocks.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ntn = join(here, "fake-ntn.mjs");
@@ -177,4 +178,99 @@ test("read view turns Notion tags into markdown", () => {
   assert.equal(readable(md), "📄 [General](https://app.notion.com/p/a)\n\n\n🗃️ [Tasks](https://app.notion.com/p/b)\n");
   // Consecutive child pages stay separate paragraphs instead of one run-on line.
   assert.equal(readable('<page url="u1">A</page>\n<page url="u2">B</page>'), "📄 [A](u1)\n\n📄 [B](u2)\n");
+});
+
+test("to-dos: nested items parse, code fences are ignored, a stale line is not flipped", () => {
+  const text = "# Tasks\n- [ ] one\n\t- [x] nested\n```md\n- [ ] in code\n```\n* [X] star";
+  assert.deepEqual(todos(text), [
+    { line: 1, done: false, label: "one", depth: 0 },
+    { line: 2, done: true, label: "nested", depth: 1 },
+    { line: 6, done: true, label: "star", depth: 0 },
+  ]);
+  assert.equal(toggleTodo(text, 1, "one"), text.replace("- [ ] one", "- [x] one"));
+  assert.equal(toggleTodo(text, 2, "nested"), text.replace("[x] nested", "[ ] nested"));
+  assert.equal(toggleTodo(text, 4, "in code"), null);
+  // A refresh inserted a line: index 1 now holds another to-do, so nothing flips.
+  assert.equal(toggleTodo("# Tasks\n- [ ] new\n- [ ] one", 1, "one"), null);
+  assert.equal(toggleTodo(text, 0, "one"), null);
+});
+
+// Shaped like the user's Tasks page: child page, empty block, inline database, then ordinary markdown.
+const TASKS = [
+  '<page url="https://app.notion.com/p/General-0e5e82c3128782a4a3c807e20e40ff01">General</page>',
+  "<empty-block/>",
+  '<database url="https://app.notion.com/p/0e5e82c3128782a4a3c807e20e40ff02" inline="true" data-source-url="collection://0e5e82c3-1287-82a4-a3c8-07e20e40ffea">Tasks</database>',
+  "## Notes",
+  "- [ ] call back",
+  "\t- [x] nested done",
+  "Some **bold** text",
+].join("\n");
+
+test("every line of a page belongs to exactly one block, in order", () => {
+  const inputs = [
+    TASKS, "", "\n", "# a\n\ntext\n", "a\r\nb\r\n",
+    "```js\nunclosed fence\n- [ ] x",
+    "<callout>\nnever closed\n- [ ] x",
+    "<details>\n<summary>a</summary>\n<details>\ninner\n</details>\nstill outer\n</details>\nafter",
+    "> a\n> b\n\n1. x\n2) y\n---\n#### four",
+  ];
+  for (const text of inputs) assert.equal(parseBlocks(text).map((b) => b.raw).join("\n"), text);
+  assert.deepEqual(parseBlocks(""), []);
+});
+
+test("a Tasks-shaped page parses into typed blocks with their data", () => {
+  const b = parseBlocks(TASKS);
+  assert.deepEqual(b.map((x) => [x.type, x.from, x.to]), [
+    ["page", 0, 0], ["empty", 1, 1], ["database", 2, 2], ["heading", 3, 3],
+    ["todo", 4, 4], ["todo", 5, 5], ["paragraph", 6, 6],
+  ]);
+  assert.equal(b[0].title, "General");
+  assert.equal(b[0].id, "0e5e82c3-1287-82a4-a3c8-07e20e40ff01");
+  assert.equal(b[0].url, "https://app.notion.com/p/General-0e5e82c3128782a4a3c807e20e40ff01");
+  assert.equal(b[2].title, "Tasks");
+  assert.equal(b[2].id, "0e5e82c3-1287-82a4-a3c8-07e20e40ff02");
+  assert.equal(b[2].source, "0e5e82c3-1287-82a4-a3c8-07e20e40ffea");
+  assert.deepEqual([b[3].level, b[3].text], [2, "Notes"]);
+  assert.deepEqual([b[4].done, b[4].label, b[4].depth], [false, "call back", 0]);
+  assert.deepEqual([b[5].done, b[5].label, b[5].depth], [true, "nested done", 1]);
+  assert.deepEqual([b[6].text, b[6].depth], ["Some **bold** text", 0]);
+});
+
+test("a fence swallows everything inside it", () => {
+  const text = '```md\n- [ ] x\n<page url="https://www.notion.so/a-0e5e82c3128782a4a3c807e20e40ff01">A</page>\n```\nafter';
+  const b = parseBlocks(text);
+  assert.deepEqual(b.map((x) => [x.type, x.from, x.to]), [["code", 0, 3], ["paragraph", 4, 4]]);
+  assert.equal(b[0].lang, "md");
+});
+
+test("a multi-line tag is one raw block through its matching close, or to the end if unclosed", () => {
+  const nested = "<details>\n<summary>a</summary>\n<details>\ninner\n</details>\nstill outer\n</details>\nafter";
+  assert.deepEqual(parseBlocks(nested).map((x) => [x.type, x.from, x.to, x.tag]), [["raw", 0, 6, "details"], ["paragraph", 7, 7, undefined]]);
+  assert.deepEqual(parseBlocks("<callout>one line</callout>\nnext").map((x) => x.type), ["raw", "paragraph"]);
+  assert.deepEqual(parseBlocks('<unknown a="1"/>\nnext').map((x) => x.type), ["raw", "paragraph"]);
+  const open = parseBlocks("intro\n<callout>\n- [ ] inside\nmore");
+  assert.deepEqual(open.map((x) => [x.type, x.from, x.to, x.tag]), [["paragraph", 0, 0, undefined], ["raw", 1, 3, "callout"]]);
+});
+
+test("a todo block agrees with todos() on its line, label, state and depth", () => {
+  const text = "# T\n- [ ] a\n\t- [x] b\n```\n- [ ] no\n```\n+ [X] c";
+  const fromBlocks = parseBlocks(text).filter((x) => x.type === "todo").map((x) => ({ line: x.from, done: x.done, label: x.label, depth: x.depth }));
+  assert.deepEqual(fromBlocks, todos(text));
+});
+
+test("lists, quotes, dividers and look-alikes parse as their own types", () => {
+  const b = parseBlocks("- a\n\t* b\n1. c\n2) d\n> q1\n> q2\n---\n#### four\nhttps://x <https://y>\n  \n\tindented");
+  assert.deepEqual(b.map((x) => x.type), ["bullet", "bullet", "numbered", "numbered", "quote", "divider", "paragraph", "paragraph", "blank", "paragraph"]);
+  assert.deepEqual([b[1].depth, b[1].text], [1, "b"]);
+  assert.deepEqual([b[4].from, b[4].to, b[4].text], [4, 5, "q1\nq2"]);
+  assert.deepEqual([b[9].text, b[9].depth], ["indented", 1]);
+});
+
+test("a page URL without 32 hex digits has no id, and a database without a data source has no source", () => {
+  const [p, d] = parseBlocks('<page url="https://www.notion.so/short">P</page>\n<database url="https://www.notion.so/x-0e5e82c3128782a4a3c807e20e40ff02">D</database>');
+  assert.deepEqual([p.type, p.id], ["page", null]);
+  assert.deepEqual([d.type, d.source, d.id], ["database", null, "0e5e82c3-1287-82a4-a3c8-07e20e40ff02"]);
+  // Attribute order does not matter.
+  const [e] = parseBlocks('<database data-source-url="collection://0e5e82c3-1287-82a4-a3c8-07e20e40ffea" url="u">T</database>');
+  assert.equal(e.source, "0e5e82c3-1287-82a4-a3c8-07e20e40ffea");
 });
