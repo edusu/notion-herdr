@@ -190,7 +190,7 @@ class NotionNotes extends View {
   // interleave with an upload comparing `base`; canUpload stops new ones from queuing meanwhile.
   createPage(block, title, cx) {
     const id = this.page, m = this.meta;
-    this.creating = { block, title };
+    this.creating = block;
     cx.spawn(async (cx) => {
       let made = null;
       try {
@@ -202,8 +202,7 @@ class NotionNotes extends View {
           // Notion refuses an upload that lacks the new tag ("would delete 1 child page"), so it is never dropped.
           const line = found ?? `<page url="${pageUrl(made.id)}">${title}</page>`;
           const text = this.editor.value();
-          this.editor.set_value(replaceBlock(text, block, line) ?? (text ? `${text}\n${line}` : line));
-          this.edited(m);
+          this.setText(replaceBlock(text, block, line) ?? (text ? `${text}\n${line}` : line), m);
           // The old base would read as a conflict now; with no tag found it stays, and the upload reports it.
           if (found) {
             m.base = remote.markdown;

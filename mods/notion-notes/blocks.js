@@ -1,7 +1,7 @@
 // Splits a note's markdown into blocks for the read view. Pure and free of Herdr imports, so
 // the self-check runs it under plain node. Blocks only describe the text: uploads always send
 // the editor's text, never one rebuilt from blocks.
-import { canonicalId } from "./notion.js";
+import { canonicalId, plainText } from "./notion.js";
 
 const depthOf = (indent) => indent.replace(/\t/g, "  ").length >> 1;
 
@@ -18,8 +18,18 @@ const CONTAINERS = new Set(["callout", "details"]);
  * parsed again with `from`/`to` as line numbers of the full text, `summary` is a toggle's
  * `<summary>` line and `icon` the callout's attribute (both null if absent). Null for any other
  * block, and for one whose opening or closing tag shares a line with text, which is drawn whole.
+ * `nest` is the children's smallest list depth, the container's own indentation.
  */
 export function children(block) {
+  if (typeof block !== "object" || !block) return null;
+  if (!inners.has(block)) inners.set(block, inside(block));
+  return inners.get(block);
+}
+
+// Blocks are kept until the text changes, so a container is split once, not on every render.
+const inners = new WeakMap();
+
+function inside(block) {
   const tag = block?.type === "raw" && block.tag;
   if (!CONTAINERS.has(tag)) return null;
   const lines = block.raw.split("\n");
@@ -30,10 +40,13 @@ export function children(block) {
   const inner = lines.slice(open + 1, closed ? last : lines.length);
   const k = inner.findIndex((l) => l.trim()), sum = /^\s*<summary>(.*)<\/summary>\s*$/.exec(inner[k] ?? "");
   const skip = sum ? k + 1 : 0, shift = block.from + open + 1 + skip;
+  const blocks = parseBlocks(inner.slice(skip).join("\n")).map((b) => ({ ...b, from: b.from + shift, to: b.to + shift }));
+  const depths = blocks.filter((b) => b.depth !== undefined).map((b) => b.depth);
   return {
     icon: /(?:^|\s)icon="([^"]*)"/.exec(lines.slice(0, open + 1).join(" "))?.[1] ?? null,
     summary: sum ? sum[1] : null,
-    blocks: parseBlocks(inner.slice(skip).join("\n")).map((b) => ({ ...b, from: b.from + shift, to: b.to + shift })),
+    blocks,
+    nest: depths.length ? Math.min(...depths) : 0,
   };
 }
 
@@ -164,11 +177,11 @@ function linesOf(text, b) {
   return ok ? lines : null;
 }
 
-/** `text` with the lines of `block` replaced by `raw` (several lines, or "" to remove them), or null if `block` is stale. */
+/** `text` with the lines of `block` replaced by `raw` (several lines; "" is one empty line, null removes them), or null if `block` is stale. */
 export function replaceBlock(text, block, raw) {
   const lines = linesOf(text, block);
   if (!lines) return null;
-  lines.splice(block.from, block.to - block.from + 1, ...(raw === "" ? [] : [raw]));
+  lines.splice(block.from, block.to - block.from + 1, ...(raw === null ? [] : [raw]));
   return lines.join("\n");
 }
 
@@ -187,17 +200,20 @@ const indentOf = (l) => /^\s*/.exec(l)[0];
 const PREFIX = { paragraph: "", h1: "# ", h2: "## ", h3: "### ", todo: "- [ ] ", bullet: "- ", numbered: "1. ", quote: "> " };
 // Only these keep their indentation: the parser reads a heading or a quote only when unindented.
 const KEEPS_INDENT = new Set(["paragraph", "todo", "bullet", "numbered"]);
-const RETYPABLE = new Set(["paragraph", "heading", "todo", "bullet", "numbered", "quote"]);
+// The one-line block types that can be retyped and edited in place.
+const ONE_LINE = new Set(["paragraph", "heading", "todo", "bullet", "numbered", "quote"]);
 
 /**
  * Gives a one-line block another type (`paragraph`, `h1`–`h3`, `todo`, `bullet`, `numbered` or
- * `quote`), keeping its text. A done to-do loses its `[x]`. `raw` is returned unchanged when it
- * is not a one-line paragraph, heading, list item or quote, or when `type` is unknown.
+ * `quote`), keeping its text. A done to-do loses its `[x]` and a blank line becomes the bare
+ * marker. `raw` is returned unchanged when it is not one of those one-line blocks, or when
+ * `type` is unknown.
  */
 export function retype(raw, type) {
   if (typeof raw !== "string" || raw.includes("\n") || !Object.hasOwn(PREFIX, type)) return raw;
   const [kind, , data] = block([raw], 0);
-  if (!RETYPABLE.has(kind)) return raw;
+  if (kind === "blank") return PREFIX[type];
+  if (!ONE_LINE.has(kind)) return raw;
   return (KEEPS_INDENT.has(type) ? indentOf(raw) : "") + PREFIX[type] + (data.text ?? data.label);
 }
 
@@ -206,16 +222,14 @@ export function retype(raw, type) {
  * marker, an open to-do, or the next number with the same `.` or `)`. Anything else gives "".
  */
 export function continuation(block) {
-  const [, indent, mark] = /^(\s*)(\S+)/.exec(block?.raw ?? "") ?? [];
+  const indent = indentOf(block?.raw ?? "");
   switch (block?.type) {
-    case "bullet": return indent + mark + " ";
+    case "bullet": return indent + block.raw.trimStart()[0] + " ";
     case "todo": return indent + PREFIX.todo;
-    case "numbered": return indent + (parseInt(mark) + 1) + mark.slice(-1) + " ";
+    case "numbered": return indent + (parseInt(block.marker) + 1) + block.marker.slice(-1) + " ";
     default: return "";
   }
 }
-
-const EDITABLE = new Set(["paragraph", "heading", "bullet", "numbered", "todo", "quote"]);
 
 /**
  * How a block is edited in place: `prefix` is the markdown that stays out of the field and
@@ -226,7 +240,7 @@ const EDITABLE = new Set(["paragraph", "heading", "bullet", "numbered", "todo", 
 export function editParts(block) {
   const type = block?.type;
   if (type === "blank" || type === "empty") return { prefix: "", text: "" };
-  if (!EDITABLE.has(type) || block.to !== block.from) return null;
+  if (!ONE_LINE.has(type) || block.to !== block.from) return null;
   const text = type === "todo" ? block.label : block.text;
   return { prefix: block.raw.slice(0, block.raw.length - text.length), text };
 }
@@ -254,11 +268,6 @@ export function slashQuery(prev, next) {
   const pos = grew > 0 ? p + 1 : p;
   const m = /(?:^|\s)\/([\p{L}\p{N}]*)$/u.exec(next.slice(0, pos));
   return m && { start: pos - m[1].length - 1, query: m[1] };
-}
-
-/** `retype`, also for a blank line (which `retype` leaves alone): it becomes the type's bare marker. */
-export function setType(raw, type) {
-  return raw.trim() === "" && Object.hasOwn(PREFIX, type) ? PREFIX[type] : retype(raw, type);
 }
 
 // In menu order. `id` is a `retype` type, or "divider"; keywords are matched by prefix.
@@ -295,8 +304,6 @@ export function appendedPage(remote, base, id) {
   return want && link(line, "page")?.id === want ? line : null;
 }
 
-const join = (rich) => rich.map((t) => t.plain_text).join("");
-
 /**
  * A database row's property as `{ text, color? }`; `color` is a Notion colour name, only for
  * status and select (a multi-select shows its names as plain text). Unsupported types and
@@ -308,7 +315,7 @@ export function cell(property) {
     if (v === undefined) return { text: "—" };
     switch (property.type) {
       case "title":
-      case "rich_text": return { text: join(v) };
+      case "rich_text": return { text: plainText(v) };
       case "status":
       case "select": return v ? { text: v.name, color: v.color } : { text: "" };
       case "multi_select":
@@ -327,7 +334,7 @@ export function cell(property) {
 }
 
 const EDITABLE_CELLS = new Set(["checkbox", "select", "status", "title", "rich_text", "number", "url", "email", "phone_number"]);
-const PLAIN = { bold: false, italic: false, strikethrough: false, underline: false, code: false, color: "default" };
+const PLAIN = Object.entries({ bold: false, italic: false, strikethrough: false, underline: false, code: false, color: "default" });
 
 /**
  * Whether the read view may edit this cell. A title or rich text is editable only when every
@@ -337,5 +344,5 @@ export function editableCell(column, property) {
   if (!EDITABLE_CELLS.has(column.type)) return false;
   if (column.type !== "title" && column.type !== "rich_text") return true;
   return (property?.[column.type] ?? []).every((t) => t.type === "text" && !t.text?.link && !t.href && !t.plain_text?.includes("\n")
-    && Object.entries(PLAIN).every(([k, v]) => (t.annotations?.[k] ?? v) === v));
+    && PLAIN.every(([k, v]) => (t.annotations?.[k] ?? v) === v));
 }

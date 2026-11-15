@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { client, upload, serial, titleOf, refreshDecision, pages, ago, pageUrl, readable, mappedPage, sourceNames, canonicalId, propertyValue } from "../mods/notion-notes/notion.js";
-import { parseBlocks, children, todos, toggleTodo, cell, replaceBlock, insertAfter, retype, continuation, slashQuery, commands, setType, editParts, nextEditable, appendedPage, editableCell } from "../mods/notion-notes/blocks.js";
+import { parseBlocks, children, todos, toggleTodo, cell, replaceBlock, insertAfter, retype, continuation, slashQuery, commands, editParts, nextEditable, appendedPage, editableCell } from "../mods/notion-notes/blocks.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ntn = join(here, "fake-ntn.mjs");
@@ -645,15 +645,16 @@ test("readable() finds the url attribute in any position", () => {
   assert.equal(readable('<page color="gray" url="u">T</page>'), "📄 [T](u)\n");
 });
 
-test("replaceBlock swaps a block's lines, removes them for an empty raw, and refuses a stale block", () => {
+test("replaceBlock swaps a block's lines, removes them for null, leaves an empty line for an empty string, and refuses a stale block", () => {
   const text = "# Title\nfirst\n> a\n> b\nlast";
   const [h, p, q, l] = parseBlocks(text);
   for (const b of parseBlocks(text)) assert.equal(replaceBlock(text, b, b.raw), text);
   assert.equal(replaceBlock(text, p, "- first\n- second"), "# Title\n- first\n- second\n> a\n> b\nlast");
   assert.equal(replaceBlock(text, q, "quote"), "# Title\nfirst\nquote\nlast");
-  assert.equal(replaceBlock(text, h, ""), "first\n> a\n> b\nlast");
-  assert.equal(replaceBlock(text, l, ""), "# Title\nfirst\n> a\n> b");
-  assert.equal(replaceBlock("only", parseBlocks("only")[0], ""), "");
+  assert.equal(replaceBlock(text, h, null), "first\n> a\n> b\nlast");
+  assert.equal(replaceBlock(text, l, null), "# Title\nfirst\n> a\n> b");
+  assert.equal(replaceBlock("only", parseBlocks("only")[0], null), "");
+  assert.equal(replaceBlock(text, h, ""), "\nfirst\n> a\n> b\nlast");
   // The page changed underneath: a line was inserted above, or the block's text differs.
   assert.equal(replaceBlock("new\n" + text, p, "x"), null);
   assert.equal(replaceBlock(text.replace("first", "edited"), p, "x"), null);
@@ -695,7 +696,7 @@ test("retype returns the input when it is not a one-line block or the type is un
   assert.equal(retype("> a\n> b", "paragraph"), "> a\n> b");
   assert.equal(retype("text", "code"), "text");
   assert.equal(retype("text", undefined), "text");
-  for (const raw of ["---", "<empty-block/>", "| a |", "```", ""]) assert.equal(retype(raw, "bullet"), raw);
+  for (const raw of ["---", "<empty-block/>", "| a |", "```"]) assert.equal(retype(raw, "bullet"), raw);
 });
 
 test("continuation gives the prefix of the block Enter creates, with the same indentation", () => {
@@ -778,13 +779,13 @@ test("commands filters by prefix of any keyword, in English or Spanish, ignoring
   assert.deepEqual(ids("headings"), []);
 });
 
-test("setType retypes a line, and gives a blank line the new marker", () => {
-  assert.equal(setType("foo", "h2"), "## foo");
-  assert.equal(setType("- [x] foo", "bullet"), "- foo");
-  assert.equal(setType("- ", "quote"), "> ");
-  assert.equal(setType("", "todo"), "- [ ] ");
-  assert.equal(setType("  ", "numbered"), "1. ");
-  assert.equal(setType("", "paragraph"), "");
+test("retype gives a blank line the new marker", () => {
+  assert.equal(retype("foo", "h2"), "## foo");
+  assert.equal(retype("- [x] foo", "bullet"), "- foo");
+  assert.equal(retype("- ", "quote"), "> ");
+  assert.equal(retype("", "todo"), "- [ ] ");
+  assert.equal(retype("  ", "numbered"), "1. ");
+  assert.equal(retype("", "paragraph"), "");
 });
 
 test("editParts splits an editable one-line block into its markdown prefix and its text", () => {

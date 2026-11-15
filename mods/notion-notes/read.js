@@ -5,7 +5,7 @@ import { v_flex, h_flex, Checkbox, Collapsible, TextView, Input, InputState, Pop
 import { theme, run } from "herdr";
 import { NAME, REFRESH_EVERY } from "./store.js";
 import { readable } from "./notion.js";
-import { parseBlocks, children, toggleTodo, cell, replaceBlock, insertAfter, retype, continuation, editParts, nextEditable, slashQuery, commands, setType, editableCell } from "./blocks.js";
+import { parseBlocks, children, toggleTodo, cell, replaceBlock, insertAfter, retype, continuation, editParts, nextEditable, slashQuery, commands, editableCell } from "./blocks.js";
 
 const INDENT = 18;
 
@@ -34,19 +34,27 @@ const LISTS = new Set(["bullet", "numbered", "todo"]);
 // Enter and Backspace on an empty field of these types turn it into a paragraph first.
 const LEAVES_TYPE = new Set([...LISTS, "heading", "quote"]);
 const sameBlock = (a, b) => a.from === b.from && a.raw === b.raw;
+// Released late because closing can run inside the state's own submit or blur event.
+const release = (state, cx) => (cx ? cx.timer.after(300, () => state.release()) : state.release());
+const menuBox = (id, w, t) => v_flex().id(id).w(w).p(4).gap(1).rounded(8).border_1().border_color(t.border).bg(t.popover);
+const menuRow = (id, on, t) => h_flex().id(id).h(26).px(8).items_center().rounded(4).cursor_pointer()
+  .when(on, (r) => r.bg(t.hover)).hover((s) => s.bg(t.hover));
 
 export const readMethods = {
   toggleBlock(block, cx) {
     if (this.editor && !this.meta.readonly) {
       // null: the text moved under this block since it was drawn.
       const next = toggleTodo(this.editor.value(), block.from, block.label);
-      if (next !== null) {
-        this.editor.set_value(next);
-        // The docs do not say whether set_value emits "change"; edited() is idempotent.
-        this.edited(this.meta);
-      }
+      if (next !== null) this.setText(next);
     }
     cx.notify();
+  },
+
+  // Every change the read view makes to the note goes through here.
+  setText(next, m = this.meta) {
+    this.editor.set_value(next);
+    // The docs do not say whether set_value emits "change"; edited() is idempotent.
+    this.edited(m);
   },
 
   isEditing(block) {
@@ -85,9 +93,7 @@ export const readMethods = {
     const ed = this.editing;
     if (!ed) return;
     this.editing = null;
-    // Released late because this can run inside the state's own submit or blur event.
-    if (cx) cx.timer.after(300, () => ed.state.release());
-    else ed.state.release();
+    release(ed.state, cx);
   },
 
   // The raw line the open field stands for; a single line, and the block's own raw when untouched.
@@ -102,15 +108,13 @@ export const readMethods = {
   apply(next) {
     this.editing.stale = next === null;
     if (this.editing.stale) return false;
-    this.editor.set_value(next);
-    this.edited(this.meta);
+    this.setText(next);
     return true;
   },
 
-  // Replaces the open block's lines by `raw`, where "" leaves an empty line (replaceBlock alone would remove them).
+  // Replaces the open block's lines by `raw`.
   write(raw) {
-    const text = this.editor.value(), { block } = this.editing;
-    return this.apply(raw === "" ? replaceBlock(insertAfter(text, block, ""), block, "") : replaceBlock(text, block, raw));
+    return this.apply(replaceBlock(this.editor.value(), this.editing.block, raw));
   },
 
   commit() {
@@ -154,17 +158,14 @@ export const readMethods = {
     const { block, state, prefix, slash } = this.editing;
     const end = slash.start + 1 + slash.query.length, value = state.value();
     const clean = value.slice(0, slash.start) + value.slice(end);
-    state.set_selected_range({ start: slash.start, end });
-    state.replace("");
-    // Not known whether replace() honours the range; the computed text is the fallback.
-    if (state.value() !== clean) state.set_value(clean);
+    state.set_value(clean);
     this.editing.slash = null;
     const text = clean.replace(/\r?\n/g, " ");
     if (id === "page") {
       this.closeEdit(cx);
       return this.createPage(block, text.trim() || "Untitled", cx);
     }
-    if (id !== "divider") return this.swap(setType(prefix + text, id), cx);
+    if (id !== "divider") return this.swap(retype(prefix + text, id), cx);
     // write("---\n") leaves an empty line below the divider; that line is the one that opens.
     if (this.write(text === "" ? "---\n" : `${prefix + text}\n---\n`)) this.openAt(block.from + (text === "" ? 1 : 2), cx);
   },
@@ -182,7 +183,7 @@ export const readMethods = {
     if (state.value()) return;
     if (LEAVES_TYPE.has(block.type)) return this.swap(retype(prefix, "paragraph"), cx);
     const prev = nextEditable(this.blocks(), block.from, -1);
-    if (!this.apply(replaceBlock(this.editor.value(), block, ""))) return;
+    if (!this.apply(replaceBlock(this.editor.value(), block, null))) return;
     // Blocks above the deleted lines keep their line numbers.
     if (prev) this.openAt(prev.from, cx, true);
     else this.closeEdit(cx);
@@ -218,10 +219,8 @@ export const readMethods = {
     return v_flex().flex_1().min_w(0).gap(2)
       .child(Popup.new("nn-slash", h_flex().id("nn-field").track_focus(this.fieldFocus).on_key_down((e, cx) => this.fieldKey(e, cx))
         .child(Input.new(ed.state).flex_1().text_size(size).text_color(t.foreground))).anchor("bottom_left")
-        .when(items.length > 0, (el) => el.content(v_flex().id("nn-menu").w(220).p(4).gap(1).rounded(8).border_1().border_color(t.border).bg(t.popover)
-          .children(items.map((c, i) => h_flex().id(`nn-cmd-${c.id}`).h(26).px(8).items_center().rounded(4).cursor_pointer()
-            .text_size(12).text_color(t.foreground)
-            .when(i === ed.slash.at, (r) => r.bg(t.hover)).hover((s) => s.bg(t.hover))
+        .when(items.length > 0, (el) => el.content(menuBox("nn-menu", 220, t)
+          .children(items.map((c, i) => menuRow(`nn-cmd-${c.id}`, i === ed.slash.at, t).text_size(12).text_color(t.foreground)
             .on_click((_e, cx) => { this.command(c.id, cx); cx.notify(); }).child(c.label))))))
       .when(ed.stale, (el) => el.child(h_flex().gap(8).items_center().text_size(11).text_color(t.blocked)
         .child(div().flex_1().min_w(0).child("This block changed in Notion; copy your text or discard it"))
@@ -235,7 +234,7 @@ export const readMethods = {
     const c = this.cellEdit;
     if (!c) return;
     this.cellEdit = null;
-    if (c.state) { if (cx) cx.timer.after(300, () => c.state.release()); else c.state.release(); }
+    if (c.state) release(c.state, cx);
   },
 
   // Saves and closes the open cell edit; with no `cx` (the view is going away) a draft is dropped.
@@ -249,8 +248,8 @@ export const readMethods = {
 
   // Runs a write on the serial Notion queue. Nothing is drawn before Notion answers: success marks
   // the table stale so the next render reads it again, failure shows under its row until a read succeeds.
-  mutate(c, key, job, cx, done) {
-    const e = c.e;
+  mutate(c, job, cx, done) {
+    const e = c.e, key = c.id;
     (e.writing ??= new Set()).add(key);
     cx.spawn(async (cx) => {
       try {
@@ -268,12 +267,12 @@ export const readMethods = {
   },
 
   writeCell(c, value, cx) {
-    this.mutate(c, c.id, () => this.api.setProperty(c.row.id, c.col, value), cx);
+    this.mutate(c, () => this.api.setProperty(c.row.id, c.col, value), cx);
   },
 
   addRow(c, title, cx) {
     const m = this.meta;
-    this.mutate(c, c.id, () => this.api.addRow(c.source, c.col.name, title), cx, (made) => {
+    this.mutate(c, () => this.api.addRow(c.source, c.col.name, title), cx, (made) => {
       if (this.meta === m) this.openPage(made.id, made.url, {}, cx);
     });
   },
@@ -318,11 +317,10 @@ export const readMethods = {
   // The options of a select or status cell, each drawn as its tag; only select can be emptied.
   cellMenu(c, t) {
     const items = [...(c.col.type === "select" ? [{ name: null }] : []), ...c.col.options];
-    return v_flex().id(`${c.id}-menu`).w(200).p(4).gap(1).rounded(8).border_1().border_color(t.border).bg(t.popover)
+    return menuBox(`${c.id}-menu`, 200, t)
       .on_click((_e, cx) => cx.stop_propagation())
       .on_mouse_down_out((_e, cx) => { this.menuClosed = { id: c.id, at: Date.now() }; this.closeCell(cx); cx.notify(); })
-      .children(items.map((o) => h_flex().id(`${c.id}-o-${o.name ?? ""}`).h(26).px(8).items_center().rounded(4).cursor_pointer()
-        .when((o.name ?? "") === c.text, (r) => r.bg(t.hover)).hover((s) => s.bg(t.hover))
+      .children(items.map((o) => menuRow(`${c.id}-o-${o.name ?? ""}`, (o.name ?? "") === c.text, t)
         .on_click((_e, cx) => this.pickOption(c, o.name, cx))
         .child(o.name === null ? div().text_xs().text_color(t.muted).child("Empty") : tag(t, o.name, o.color))));
   },
@@ -364,6 +362,9 @@ export const readMethods = {
       });
     }
     const note = (text, color) => div().flex_none().px(6).text_xs().text_color(color).child(text);
+    const errorOf = (k) => (e.errors?.has(k) ? [note(e.errors.get(k), t.ansi1)] : []);
+    const action = (id, label, onClick) => h_flex().id(id).flex_none().px(6).py(4).cursor_pointer().text_xs().text_color(t.muted)
+      .on_click(onClick).child(label);
     const d = e.data;
     if (!d) return [e.error ? note(e.error, t.ansi1) : note("Loading…", t.dim)];
     const ro = Boolean(this.meta?.readonly), title = d.columns.find((col) => col.type === "title");
@@ -385,18 +386,16 @@ export const readMethods = {
     const adding = `nn-n-${block.from}`;
     const newRow = () => this.cellEdit?.id === adding ? h_flex().flex_none().px(6).py(2).child(this.cellInput(t))
       : e.writing?.has(adding) ? note("Creating row…", t.muted)
-      : h_flex().id(adding).flex_none().px(6).py(4).cursor_pointer().text_xs().text_color(t.muted)
-        .on_click((ev, cx) => this.clickCell({ id: adding, e, source: block.source, col: title, prop: {}, text: "" }, ev, cx)).child("+ New");
+      : action(adding, "+ New", (ev, cx) => this.clickCell({ id: adding, e, source: block.source, col: title, prop: {}, text: "" }, ev, cx));
     return [
       h_flex().flex_none().px(6).py(2).gap(8).border_b(1).border_color(t.border).text_xs().text_color(t.muted)
         .children(d.columns.map((col, c) => div().flex_1().flex_grow(c === 0 ? 2 : 1).min_w(0).truncate().child(col.name))),
       ...d.rows.flatMap((r, i) => [h_flex().id(`nn-r-${block.from}-${i}`).flex_none().min_h(26).px(6).gap(8).items_center().rounded(6)
         .cursor_pointer().hover((s) => s.bg(t.hover))
         .on_click((ev, cx) => this.openPage(r.id, r.url, ev, cx))
-        .children(cells(r)), ...(e.errors?.has(r.id) ? [note(e.errors.get(r.id), t.ansi1)] : [])]),
-      ...(!ro && title ? [newRow(), ...(e.errors?.has(adding) ? [note(e.errors.get(adding), t.ansi1)] : [])] : []),
-      ...(d.more ? [h_flex().id(`nn-m-${block.from}`).flex_none().px(6).py(4).cursor_pointer().text_xs().text_color(t.muted)
-        .on_click((ev, cx) => this.openBlock(block, ev, cx)).child("Showing first 50 · Open in Notion")] : []),
+        .children(cells(r)), ...errorOf(r.id)]),
+      ...(!ro && title ? [newRow(), ...errorOf(adding)] : []),
+      ...(d.more ? [action(`nn-m-${block.from}`, "Showing first 50 · Open in Notion", (ev, cx) => this.openBlock(block, ev, cx))] : []),
       ...(e.error ? [note(e.error, t.ansi1)] : []),
     ];
   },
@@ -412,7 +411,7 @@ export const readMethods = {
       // A text cell opens its block for editing on click; while open, the field takes its place.
       const inPlace = (view, size = 13) => this.isEditing(block) ? this.field(t, size)
         : editable ? view.id(`nn-e-${block.from}`).on_click((e, cx) => this.editBlock(block, e, cx)) : view;
-      if (this.creating && sameBlock(this.creating.block, block)) return pad(0).child(div().text_color(t.muted).child("Creating page…"));
+      if (this.creating && sameBlock(this.creating, block)) return pad(0).child(div().text_color(t.muted).child("Creating page…"));
       switch (block.type) {
         case "todo": {
           const on = block.done;
@@ -457,8 +456,7 @@ export const readMethods = {
         default: {
           const inner = children(block);
           if (!inner) return md(id, readable(block.raw));
-          const depths = inner.blocks.filter((b) => b.depth !== undefined).map((b) => b.depth);
-          const body = v_flex().flex_1().min_w(0).gap(4).children(inner.blocks.map((b) => row(b, depths.length ? Math.min(...depths) : 0)));
+          const body = v_flex().flex_1().min_w(0).gap(4).children(inner.blocks.map((b) => row(b, inner.nest)));
           if (block.tag === "callout") {
             return h_flex().flex_none().items_start().gap(8).p(10).rounded(8).bg(t.raised)
               .when(Boolean(inner.icon), (el) => el.child(div().flex_none().child(inner.icon))).child(body);

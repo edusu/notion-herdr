@@ -20,7 +20,9 @@ export const canonicalId = (id) => {
   return hex && `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 };
 
-const plain = (rich) => (rich ?? []).map((t) => t.plain_text).join("") || "Untitled";
+/** Rich text as plain text. */
+export const plainText = (rich) => (rich ?? []).map((t) => t.plain_text).join("");
+const plain = (rich) => plainText(rich) || "Untitled";
 
 /** The plain title of a page object from any `ntn` JSON output. */
 export function titleOf(page) {
