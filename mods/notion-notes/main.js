@@ -4,12 +4,12 @@
 // The save chain is adapted from tab-notes in ozcberkay/herdr-coban (Apache-2.0).
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Editor, EditorState, Input, InputState } from "gpui-base";
-import { exec, theme, settings, props, run, shared, layout, readTextFile } from "herdr";
+import { exec, theme, settings, props, run, shared, layout, panes, focused, readTextFile } from "herdr";
 import { client, upload, serial, refreshDecision, pageUrl, validId } from "./notion.js";
 import { replaceBlock, appendedPage } from "./blocks.js";
 import { pickerMethods } from "./picker.js";
 import { readMethods, sourcesChanged, release } from "./read.js";
-import { NAME, MAP_REV, REFRESH_EVERY, dir, mapPath, cachePath, metaPath, uploadPath, spaceKey, spacePage, readJson, put, loadSettings } from "./store.js";
+import { NAME, MAP_REV, REFRESH_EVERY, dir, mapPath, cachePath, metaPath, uploadPath, spaceKey, spacePage, readJson, put, loadSettings, mapSpace } from "./store.js";
 import * as fs from "fs/promises";
 
 const UPLOAD_AFTER = 3000;
@@ -53,6 +53,21 @@ const shownIn = (node) => {
   if (node.content?.mod === NAME && !node.content.props?.page) return true;
   const kids = node.children ?? [];
   return (node.type === "stack" ? [kids.find((c) => c.id === node.active) ?? kids[0]] : kids).some(shownIn);
+};
+
+// Shows the panel copy: unhides every node on its path and picks it in each stack.
+const showPanel = () => {
+  const find = (node, trail) => {
+    if (!node) return null;
+    if (node.content?.mod === NAME && !node.content.props?.page) return [...trail, node];
+    for (const c of node.children ?? []) { const p = find(c, [...trail, node]); if (p) return p; }
+    return null;
+  };
+  const path = find(layout(), []) ?? [];
+  path.forEach((n, i) => {
+    if (n.hidden) run("layout.show", { id: n.id });
+    if (n.type === "stack" && path[i + 1]) run("layout.select", { stack: n.id, child: path[i + 1].id });
+  });
 };
 
 class NotionNotes extends View {
@@ -236,6 +251,27 @@ class NotionNotes extends View {
       }
       this.creating = null;
       cx.notify();
+    });
+  }
+
+  // Makes this pane's note the panel's note for the current space, shows the panel and closes the pane.
+  // The panel opens it read-only until this pane's close() has saved and released it.
+  toPanel(cx) {
+    if (!this.endEdit(cx)) return;
+    const id = this.page;
+    cx.spawn(async (cx) => {
+      try {
+        await mapSpace(id);
+        showPanel();
+        // A mod pane is not told its own id. The pane is closed by explicit id, so a terminal pane is never hit.
+        // shortcut: with several note panes in the tab the focused one is taken, which may not be this one; fine while one is the norm.
+        const tab = focused()?.tab, mine = panes().filter((p) => p.mod === NAME && p.tab === tab);
+        const own = mine.length === 1 ? mine[0] : mine.find((p) => p.focused);
+        if (own) run("pane.close", { pane: own.pane });
+      } catch (e) {
+        this.errors.panel = `Cannot move to the panel: ${e.message}`;
+        cx.notify();
+      }
     });
   }
 
@@ -491,6 +527,7 @@ class NotionNotes extends View {
             .child(m?.title ?? (this.mode === "panel" ? "Choose note" : ""))))
         .when(Boolean(status), (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(status)))
         .when(Boolean(this.editor), (el) => el
+          .when(pane, (el) => el.child(button("nn-to-panel", "To panel", false, (cx) => this.toPanel(cx))))
           .child(button("nn-view", this.reading ? "Markdown" : "Read", false, (cx) => this.toggleView(cx)))
           .child(button("nn-notion", svg(`mods/${NAME}/external-link.svg`).size(14).text_color(t.foreground), false, (cx) => this.openInNotion(cx)).px(6))))
       .when(Boolean(error), (el) => el.child(div().px(14).py(6).text_size(11).text_color(t.ansi1).child(error)))

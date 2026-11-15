@@ -2,8 +2,8 @@
 // and a last "Create" row. Enter opens in the panel, cmd-Enter in a pane to the right.
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, ScrollHandle } from "gpui-base";
-import { theme, props, run, closeOverlay, setShared } from "herdr";
-import { NAME, MAP_REV, mapPath, spaceKey, spacePage, readJson, put } from "./store.js";
+import { theme, props, run, closeOverlay } from "herdr";
+import { NAME, mapPath, spacePage, readJson, mapSpace } from "./store.js";
 import { ago } from "./notion.js";
 
 const DEBOUNCE = 300;
@@ -85,12 +85,7 @@ export const pickerMethods = {
         await this.setup;
         const id = row.kind === "page" ? row.id : (await this.api.create(this.title(), row.kind === "parent" ? row.ref : parents[0]?.ref)).id;
         if (toPane) run("pane.split", { direction: "right", mod: NAME, props: { page: id } });
-        else {
-          const map = (await readJson(mapPath())) ?? {};
-          map[spaceKey()] = id;
-          await put(mapPath(), JSON.stringify(map, null, 2));
-          setShared(MAP_REV, Date.now());
-        }
+        else await mapSpace(id);
         closeOverlay(props().overlay);
       } catch (e) {
         this.error = e.message;

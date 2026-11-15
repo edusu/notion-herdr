@@ -6,6 +6,8 @@ A Herdr Desktop mod that opens a Notion page as an editable markdown note, throu
 - **Panel** (a layout block, no props): the note mapped to the active space. Click the title
   (or **Choose note**) to open the picker.
 - **Pane**: `pane.split {direction: "right", mod: "notion-notes", props: {page: "<page id>"}}`.
+  Its **To panel** button makes that page the panel's note for the current space (as choosing it
+  in the picker does), shows the panel and closes the pane.
 - **Picker** (dialog, `mod.open {name: "notion-notes"}`): with an empty query it lists the configured data source (or recently
   edited pages); typing searches the workspace (300 ms debounce). The last row creates a page
   with the typed title. `↑`/`↓` move, `Enter` opens in the panel, `⌘Enter` opens a pane to the

@@ -1,6 +1,6 @@
 // Files under ~/.config/herdr-app/notion-notes/ (never inside the mod folder: a save there
 // reloads the mod) and the mod's settings.
-import { spaces, home, appHome, readTextFile, writeTextFile } from "herdr";
+import { spaces, home, appHome, readTextFile, writeTextFile, setShared } from "herdr";
 import { DEFAULT_NTN, mappedPage } from "./notion.js";
 import * as fs from "fs/promises";
 
@@ -41,6 +41,14 @@ export async function readJson(path) {
 }
 
 // writeTextFile replaces atomically; passing what is on disk now makes it a plain overwrite.
+/** Maps the active space to `id` and tells every copy to read the map again. */
+export async function mapSpace(id) {
+  const map = (await readJson(mapPath())) ?? {};
+  map[spaceKey()] = id;
+  await put(mapPath(), JSON.stringify(map, null, 2));
+  setShared(MAP_REV, Date.now());
+}
+
 // Callers serialize writes per copy, and readTextFile's 1 MiB cap is why notes have a size limit.
 export async function put(path, text) {
   await writeTextFile(path, text, await readTextFile(path));
