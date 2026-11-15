@@ -139,10 +139,10 @@ export const readMethods = {
   // The commands shown under the open field; none while the block is stale.
   menu() {
     const ed = this.editing;
-    return ed?.slash && !ed.stale ? commands(ed.slash.query) : [];
+    return ed?.slash && !ed.stale ? commands(ed.slash.query).filter((c) => c.id !== "page" || !this.creating) : [];
   },
 
-  // Removes the typed `/query`, closes the menu and turns the block into `id`, or puts a divider below it.
+  // Removes the typed `/query`, closes the menu and turns the block into `id`, puts a divider below it, or creates a subpage in its place.
   command(id, cx) {
     const { block, state, prefix, slash } = this.editing;
     const end = slash.start + 1 + slash.query.length, value = state.value();
@@ -153,6 +153,10 @@ export const readMethods = {
     if (state.value() !== clean) state.set_value(clean);
     this.editing.slash = null;
     const text = clean.replace(/\r?\n/g, " ");
+    if (id === "page") {
+      this.closeEdit(cx);
+      return this.createPage(block, text.trim() || "Untitled", cx);
+    }
     if (id !== "divider") return this.swap(setType(prefix + text, id), cx);
     // write("---\n") leaves an empty line below the divider; that line is the one that opens.
     if (this.write(text === "" ? "---\n" : `${prefix + text}\n---\n`)) this.openAt(block.from + (text === "" ? 1 : 2), cx);
@@ -287,6 +291,7 @@ export const readMethods = {
       // A text cell opens its block for editing on click; while open, the field takes its place.
       const inPlace = (view, size = 13) => this.isEditing(block) ? this.field(t, size)
         : editable ? view.id(`nn-e-${block.from}`).on_click((e, cx) => this.editBlock(block, e, cx)) : view;
+      if (this.creating && sameBlock(this.creating.block, block)) return pad(0).child(div().text_color(t.muted).child("Creating page…"));
       switch (block.type) {
         case "todo": {
           const on = block.done;

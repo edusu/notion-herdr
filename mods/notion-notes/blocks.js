@@ -243,6 +243,7 @@ const COMMANDS = [
   ["numbered", "Numbered list", "number numbered list lista numerada"],
   ["quote", "Quote", "quote cita"],
   ["divider", "Divider", "divider hr separator separador line"],
+  ["page", "Page", "page subpage pagina subpagina"],
 ].map(([id, label, words]) => ({ id, label, words: words.split(" ") }));
 const MENU_ROWS = 8;
 const fold = (s) => s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
@@ -251,6 +252,18 @@ const fold = (s) => s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
 export function commands(query) {
   const q = fold(query);
   return COMMANDS.filter((c) => c.words.some((w) => w.startsWith(q))).slice(0, MENU_ROWS).map(({ id, label }) => ({ id, label }));
+}
+
+/**
+ * The `<page>` line Notion appended to the parent when it created page `id`, or null unless
+ * `remote` is exactly `base` plus that one line (the parent changed in some other way).
+ */
+export function appendedPage(remote, base, id) {
+  const sep = base === "" || base.endsWith("\n") ? "" : "\n";
+  if (!remote.startsWith(base + sep)) return null;
+  const line = remote.slice(base.length + sep.length);
+  const want = canonicalId(id);
+  return want && link(line, "page")?.id === want ? line : null;
 }
 
 const join = (rich) => rich.map((t) => t.plain_text).join("");

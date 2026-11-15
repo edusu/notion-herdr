@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // A stand-in for `ntn` that keeps pages in $FAKE_NTN_STATE (JSON). It strips a leading
-// frontmatter block on edit and rewrites `_x_` to `*x*`, as the real CLI does.
+// frontmatter block on edit and rewrites `_x_` to `*x*`, as the real CLI does. Creating a page under
+// a parent appends its `<page>` tag as the parent's last line, and an edit that drops a tag is refused.
 import { readFileSync, writeFileSync } from "node:fs";
 
 const file = process.env.FAKE_NTN_STATE;
@@ -30,6 +31,9 @@ if (group === "pages" && cmd === "get") {
   if (!p) fail(`Could not find page with ID: ${rest[0]}`);
   const body = stripFrontmatter(readFileSync(0, "utf8"));
   if (!body.trim()) fail("Markdown content is empty after removing the frontmatter block.");
+  for (const [, url] of p.markdown.matchAll(/^<page url="([^"]*)">.*<\/page>$/gm)) {
+    if (!body.includes(`<page url="${url}"`)) fail("Public API request failed (400 Bad Request validation_error): This operation would delete 1 child page(s), database(s), or meeting note(s):");
+  }
   p.markdown = body.replace(/_(\w+)_/g, "*$1*").trimEnd();
   state.edits = (state.edits ?? 0) + 1;
   save();
@@ -38,7 +42,13 @@ if (group === "pages" && cmd === "get") {
   const content = flag("--content");
   const title = JSON.parse(/^---\ntitle: (.*)\n---\n/.exec(content)[1]);
   const id = `00000000-0000-0000-0000-${String(Object.keys(state.pages).length).padStart(12, "0")}`;
-  state.pages[id] = { title, markdown: "", parent: flag("--parent") };
+  const parent = flag("--parent");
+  state.pages[id] = { title, markdown: "", parent };
+  const mother = state.pages[parent?.replace(/^page:/, "")];
+  if (mother) {
+    const tag = `<page url="https://app.notion.com/p/${id.replace(/-/g, "")}">${title}</page>`;
+    mother.markdown = mother.markdown ? `${mother.markdown}\n${tag}` : tag;
+  }
   save();
   console.log(JSON.stringify(page(id, state.pages[id])));
 } else if (group === "datasources" && cmd === "query" && state.sources?.[rest[0]]) {

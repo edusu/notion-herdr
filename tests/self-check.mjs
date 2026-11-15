@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { client, upload, serial, titleOf, refreshDecision, pages, ago, pageUrl, readable, mappedPage, sourceNames, canonicalId } from "../mods/notion-notes/notion.js";
-import { parseBlocks, todos, toggleTodo, cell, replaceBlock, insertAfter, retype, continuation, slashQuery, commands, setType, editParts, nextEditable } from "../mods/notion-notes/blocks.js";
+import { parseBlocks, todos, toggleTodo, cell, replaceBlock, insertAfter, retype, continuation, slashQuery, commands, setType, editParts, nextEditable, appendedPage } from "../mods/notion-notes/blocks.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ntn = join(here, "fake-ntn.mjs");
@@ -121,6 +121,70 @@ test("create passes a quoted title and the parent", async () => {
   const p = await api.create('a: "b"', "page:abc");
   assert.equal(p.title, 'a: "b"');
   assert.equal(state().pages[p.id].parent, "page:abc");
+});
+
+test("create under an existing page appends its tag as the parent's last line", async () => {
+  reset({ pages: { [ID]: { title: "t", markdown: "a\nb" } } });
+  const p = await api.create("Child", `page:${ID}`);
+  assert.equal(state().pages[ID].markdown, `a\nb\n<page url="https://app.notion.com/p/${p.id.replace(/-/g, "")}">Child</page>`);
+});
+
+const NEW_ID = "00000000-0000-0000-0000-000000000001";
+const TAG = '<page url="https://app.notion.com/p/00000000000000000000000000000001">Child</page>';
+
+test("appendedPage returns the line Notion appended for the new page, with or without a newline after base", () => {
+  assert.equal(appendedPage(`a\nb\n${TAG}`, "a\nb", NEW_ID), TAG);
+  assert.equal(appendedPage(`a\nb\n${TAG}`, "a\nb", NEW_ID.replace(/-/g, "").toUpperCase()), TAG);
+  assert.equal(appendedPage(`a\nb\n${TAG}`, "a\nb\n", NEW_ID), TAG);
+  assert.equal(appendedPage(TAG, "", NEW_ID), TAG);
+});
+
+test("appendedPage is null unless the remote is base plus exactly that one line", () => {
+  const other = "00000000-0000-0000-0000-000000000002";
+  assert.equal(appendedPage(`a\nb\n${TAG}`, "a\nb", other), null);
+  assert.equal(appendedPage("a\nb", "a\nb", NEW_ID), null);
+  assert.equal(appendedPage(`a\nchanged\n${TAG}`, "a\nb", NEW_ID), null);
+  assert.equal(appendedPage(`a\nb\nmore\n${TAG}`, "a\nb", NEW_ID), null);
+  assert.equal(appendedPage(`a\nb\n${TAG}\nmore`, "a\nb", NEW_ID), null);
+  assert.equal(appendedPage(`a\nb\n\n${TAG}`, "a\nb", NEW_ID), null);
+  assert.equal(appendedPage(`a\nb\n${TAG}`, "a\nb\n\n", NEW_ID), null);
+  assert.equal(appendedPage(`a\nb\n  ${TAG}`, "a\nb", NEW_ID), null);
+  assert.equal(appendedPage(`a\nb\n<database url="https://app.notion.com/p/00000000000000000000000000000001">Child</database>`, "a\nb", NEW_ID), null);
+});
+
+test("after creating a page, the block's text is replaced by its tag and the upload moves it into place without a conflict", async () => {
+  const base = "intro\n/page\noutro";
+  reset({ pages: { [ID]: { title: "t", markdown: base } } });
+  const slash = parseBlocks(base)[1];
+  const made = await api.create("Child", `page:${ID}`);
+  const remote = await api.get(ID);
+  const tag = appendedPage(remote.markdown, base, made.id);
+  assert.ok(tag);
+  const text = replaceBlock(base, slash, tag);
+  assert.equal(text, `intro\n${tag}\noutro`);
+  assert.deepEqual(await upload(api, ID, text, remote.markdown, file, write), { base: text });
+  assert.equal(state().pages[ID].markdown, text);
+});
+
+test("an upload without the new page's tag is refused by Notion", async () => {
+  reset({ pages: { [ID]: { title: "t", markdown: "intro\noutro" } } });
+  await api.create("Child", `page:${ID}`);
+  const remote = await api.get(ID);
+  await assert.rejects(upload(api, ID, "intro\noutro", remote.markdown, file, write), /would delete 1 child page/);
+});
+
+test("when the parent also changed elsewhere, no tag is found and an upload from the old base is a conflict", async () => {
+  const base = "intro\n/page\noutro";
+  reset({ pages: { [ID]: { title: "t", markdown: base } } });
+  const made = await api.create("Child", `page:${ID}`);
+  const s = state();
+  s.pages[ID].markdown = s.pages[ID].markdown.replace("outro", "outro, edited elsewhere");
+  reset(s);
+  const remote = await api.get(ID);
+  assert.equal(appendedPage(remote.markdown, base, made.id), null);
+  const r = await upload(api, ID, "intro\nlocal\noutro", base, file, write);
+  assert.equal(r.conflict.markdown, remote.markdown);
+  assert.equal(state().edits, undefined);
 });
 
 test("uploads when Notion still has the base, and keeps Notion's normalized markdown as base", async () => {
@@ -463,6 +527,10 @@ test("slashQuery gives null for a slash inside a word, a space, a paste or any o
 test("commands filters by prefix of any keyword, in English or Spanish, ignoring case and accents", () => {
   const ids = (q) => commands(q).map((c) => c.id);
   assert.deepEqual(ids(""), ["paragraph", "h1", "h2", "h3", "todo", "bullet", "numbered", "quote"]);
+  assert.deepEqual(ids("p"), ["paragraph", "page"]);
+  assert.deepEqual(ids("pág"), ["page"]);
+  assert.deepEqual(ids("subp"), ["page"]);
+  assert.deepEqual(commands("page"), [{ id: "page", label: "Page" }]);
   assert.deepEqual(commands("")[1], { id: "h1", label: "Heading 1" });
   assert.deepEqual(ids("h"), ["h1", "h2", "h3", "divider"]);
   assert.deepEqual(ids("h2"), ["h2"]);

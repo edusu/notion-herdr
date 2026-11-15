@@ -6,6 +6,7 @@ import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Editor, EditorState } from "gpui-base";
 import { exec, theme, settings, props, run, shared, layout, readTextFile } from "herdr";
 import { client, upload, serial, refreshDecision, pageUrl, validId } from "./notion.js";
+import { replaceBlock, appendedPage } from "./blocks.js";
 import { pickerMethods } from "./picker.js";
 import { readMethods, sourcesChanged } from "./read.js";
 import { NAME, MAP_REV, REFRESH_EVERY, dir, mapPath, cachePath, metaPath, uploadPath, spaceKey, spacePage, readJson, put, loadSettings } from "./store.js";
@@ -61,7 +62,7 @@ class NotionNotes extends View {
     // holds back saving what is typed.
     this.disk = serial(); this.net = serial();
     this.page = null; this.meta = null; this.editor = null; this.dirty = false;
-    this.conflict = null; this.errors = {}; this.gen = 0; this.changedAt = 0;
+    this.conflict = null; this.creating = null; this.errors = {}; this.gen = 0; this.changedAt = 0;
     try { this.reading = localStorage.getItem("view") === "read"; } catch { this.reading = false; }
     this.setup.catch((e) => { this.errors.settings = `Settings in mod.json: ${e.message}`; cx.notify(); });
     cx.timer.every(800, (cx) => this.tick(cx));
@@ -122,7 +123,7 @@ class NotionNotes extends View {
   }
 
   canUpload(m) {
-    return m?.pending && !m.uploading && !m.held && !m.readonly && !this.conflict;
+    return m?.pending && !m.uploading && !m.held && !m.readonly && !this.conflict && !this.creating;
   }
 
   // Local saves every 0.8 s, like tab-notes; an upload once typing has stopped for 3 s.
@@ -185,6 +186,42 @@ class NotionNotes extends View {
     });
   }
 
+  // Creates a subpage in place of `block`. The remote steps share the upload queue, so they never
+  // interleave with an upload comparing `base`; canUpload stops new ones from queuing meanwhile.
+  createPage(block, title, cx) {
+    const id = this.page, m = this.meta;
+    this.creating = { block, title };
+    cx.spawn(async (cx) => {
+      let made = null;
+      try {
+        await this.net(async () => {
+          made = await this.api.create(title, `page:${id}`);
+          const remote = await this.api.get(id);
+          if (this.meta !== m) return;
+          const found = appendedPage(remote.markdown, m.base, made.id);
+          // Notion refuses an upload that lacks the new tag ("would delete 1 child page"), so it is never dropped.
+          const line = found ?? `<page url="${pageUrl(made.id)}">${title}</page>`;
+          const text = this.editor.value();
+          this.editor.set_value(replaceBlock(text, block, line) ?? (text ? `${text}\n${line}` : line));
+          this.edited(m);
+          // The old base would read as a conflict now; with no tag found it stays, and the upload reports it.
+          if (found) {
+            m.base = remote.markdown;
+            await this.disk(() => putMeta(id, m));
+          }
+        });
+        if (this.meta === m) {
+          this.errors.page = null;
+          this.openPage(made.id, null, {}, cx);
+        }
+      } catch (e) {
+        if (this.meta === m) this.errors.page = `Cannot create page: ${e.message}${made ? " (the subpage exists in Notion; its link will appear after the next refresh)" : ""}`;
+      }
+      this.creating = null;
+      cx.notify();
+    });
+  }
+
   // The local copy opens at once and refresh() checks Notion; unsent edits always win.
   // An unreadable meta file stops the open rather than risk replacing them.
   async load(id, fresh) {
@@ -232,7 +269,7 @@ class NotionNotes extends View {
   // and its conflict check handle those). A failure keeps the text and only shows the error.
   refresh(cx) {
     const id = this.page, m = this.meta;
-    if (!m || m.elsewhere || m.pending || m.uploading || this.dirty || this.conflict || this.editing) return;
+    if (!m || m.elsewhere || m.pending || m.uploading || this.dirty || this.conflict || this.editing || this.creating) return;
     const started = Date.now();
     if (started - (fetchedAt.get(id) ?? 0) < REFRESH_EVERY) return;
     fetchedAt.set(id, started);
@@ -247,7 +284,7 @@ class NotionNotes extends View {
           await this.disk(() => putMeta(id, m));
         }
         // A block opened while the read was in flight: its text stays for the next refresh.
-        if (decision !== "apply" || this.editing) return;
+        if (decision !== "apply" || this.editing || this.creating) return;
         Object.assign(m, fromPage(p));
         m.readonly = m.partial;
         this.editor.release();
