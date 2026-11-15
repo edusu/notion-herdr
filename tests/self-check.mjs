@@ -6,8 +6,8 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from "
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { client, upload, serial, titleOf, refreshDecision, pages, ago, pageUrl, readable, mappedPage, sourceNames, canonicalId } from "../mods/notion-notes/notion.js";
-import { parseBlocks, children, todos, toggleTodo, cell, replaceBlock, insertAfter, retype, continuation, slashQuery, commands, setType, editParts, nextEditable, appendedPage } from "../mods/notion-notes/blocks.js";
+import { client, upload, serial, titleOf, refreshDecision, pages, ago, pageUrl, readable, mappedPage, sourceNames, canonicalId, propertyValue } from "../mods/notion-notes/notion.js";
+import { parseBlocks, children, todos, toggleTodo, cell, replaceBlock, insertAfter, retype, continuation, slashQuery, commands, setType, editParts, nextEditable, appendedPage, editableCell } from "../mods/notion-notes/blocks.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ntn = join(here, "fake-ntn.mjs");
@@ -412,17 +412,18 @@ test("a page URL without 32 hex digits has no id, and a database without a data 
   assert.equal(e.source, "0e5e82c3-1287-82a4-a3c8-07e20e40ffea");
 });
 
+const STATES = [{ id: "a", name: "Todo", color: "gray" }, { id: "b", name: "Doing", color: "blue" }];
 test("source returns the title column first, then the schema's order, with rows and the more flag", async () => {
   const props = (n, s) => ({ Nombre: { id: "title", type: "title", title: [{ plain_text: n }] }, Estado: { id: "s", type: "status", status: { name: s, color: "blue" } } });
   reset({ pages: {}, sources: { [ID]: {
     title: "Tasks",
     // The schema lists Estado before Nombre; the title column still comes first.
-    properties: { Estado: { id: "s", name: "Estado", type: "status" }, Fecha: { id: "d", name: "Fecha", type: "date" }, Nombre: { id: "title", name: "Nombre", type: "title" } },
+    properties: { Estado: { id: "s", name: "Estado", type: "status", status: { options: STATES } }, Fecha: { id: "d", name: "Fecha", type: "date" }, Nombre: { id: "title", name: "Nombre", type: "title" } },
     rows: [{ id: "r1", url: "https://www.notion.so/r1", properties: props("One", "Doing") }],
     more: true,
   } } });
   assert.deepEqual(await api.source(ID), {
-    columns: [{ name: "Nombre", type: "title" }, { name: "Estado", type: "status" }, { name: "Fecha", type: "date" }],
+    columns: [{ name: "Nombre", type: "title" }, { name: "Estado", type: "status", options: [{ name: "Todo", color: "gray" }, { name: "Doing", color: "blue" }] }, { name: "Fecha", type: "date" }],
     rows: [{ id: "r1", url: "https://www.notion.so/r1", properties: props("One", "Doing") }],
     more: true,
   });
@@ -434,6 +435,161 @@ test("source fails with one readable line for a missing data source, and never r
   await assert.rejects(api.source("../search"), { message: "Invalid data source id: ../search" });
   // Existing pages keep answering a plain query when no source is registered.
   assert.deepEqual(await api.list("ds"), []);
+});
+
+const DB = "0e5e82c3-1287-82a4-a3c8-07e20e40ffea";
+const ROW = "aaaaaaaa-0000-0000-0000-000000000001";
+const col = (type, extra) => ({ id: type, name: type, type, [type]: extra ?? {} });
+const dbState = () => ({ pages: {}, sources: { [DB]: { title: "DB", more: false,
+  properties: {
+    Name: col("title"), Note: col("rich_text"), Qty: col("number"), Done: col("checkbox"), Link: col("url"),
+    Pick: col("select", { options: [{ name: "Alpha", color: "blue" }, { name: "Beta", color: "red" }] }),
+    State: col("status", { options: [{ name: "Not started", color: "gray" }, { name: "Done", color: "green" }] }),
+  },
+  rows: [{ id: ROW, url: `https://www.notion.so/${ROW.replace(/-/g, "")}`, properties: {
+    Name: { type: "title", title: [{ type: "text", text: { content: "One" }, plain_text: "One" }] }, Qty: { type: "number", number: 3 },
+    Pick: { type: "select", select: { name: "Alpha", color: "blue" } },
+  } }],
+} } });
+const column = async (name) => (await api.source(DB)).columns.find((c) => c.name === name);
+const text = async (name) => cell((await api.source(DB)).rows.find((r) => r.id === ROW).properties[name]);
+
+test("source gives select and status columns their options and no other column any", async () => {
+  reset(dbState());
+  const { columns } = await api.source(DB);
+  assert.deepEqual(columns.find((c) => c.name === "Pick").options, [{ name: "Alpha", color: "blue" }, { name: "Beta", color: "red" }]);
+  assert.deepEqual(columns.find((c) => c.name === "State").options, [{ name: "Not started", color: "gray" }, { name: "Done", color: "green" }]);
+  assert.ok(columns.filter((c) => !["Pick", "State"].includes(c.name)).every((c) => !("options" in c)));
+});
+
+test("propertyValue builds the API value for each type and clears with the type's own empty value", () => {
+  const opts = [{ name: "A", color: "red" }];
+  const v = (type, value) => propertyValue({ name: "P", type, options: opts }, value);
+  assert.deepEqual(v("checkbox", true), { checkbox: true });
+  assert.deepEqual(v("number", "42"), { number: 42 });
+  assert.deepEqual(v("number", " -1.5 "), { number: -1.5 });
+  assert.deepEqual(v("number", 7), { number: 7 });
+  assert.deepEqual(v("number", ""), { number: null });
+  assert.deepEqual(v("number", null), { number: null });
+  assert.deepEqual(v("select", "A"), { select: { name: "A" } });
+  assert.deepEqual(v("select", null), { select: null });
+  assert.deepEqual(v("status", "A"), { status: { name: "A" } });
+  assert.deepEqual(v("title", "x"), { title: [{ text: { content: "x" } }] });
+  assert.deepEqual(v("rich_text", "x"), { rich_text: [{ text: { content: "x" } }] });
+  assert.deepEqual(v("rich_text", ""), { rich_text: [] });
+  assert.deepEqual(v("title", ""), { title: [] });
+  for (const type of ["url", "email", "phone_number"]) {
+    assert.deepEqual(v(type, "a@b.c"), { [type]: "a@b.c" });
+    assert.deepEqual(v(type, ""), { [type]: null });
+  }
+});
+
+test("propertyValue rejects what Notion would misread or answer with an unreadable error", () => {
+  const opts = [{ name: "A", color: "red" }];
+  const bad = (type, value, message) => assert.throws(() => propertyValue({ name: "P", type, options: opts }, value), { message });
+  bad("select", "Gamma", 'P: "Gamma" is not one of its options');
+  bad("select", "a", 'P: "a" is not one of its options');
+  bad("status", "Gamma", 'P: "Gamma" is not one of its options');
+  bad("status", null, "P: a status cannot be empty");
+  bad("number", "abc", 'P: "abc" is not a number');
+  bad("number", "1,5", 'P: "1,5" is not a number');
+  bad("number", Infinity, 'P: "Infinity" is not a number');
+  bad("number", "Infinity", 'P: "Infinity" is not a number');
+  bad("number", NaN, 'P: "NaN" is not a number');
+  bad("number", true, 'P: "true" is not a number');
+  bad("checkbox", "yes", "P: expected true or false");
+  bad("title", 5, "P: expected text");
+  bad("url", null, "P: expected text");
+  bad("rich_text", "x".repeat(2001), "P: text is longer than 2000 characters");
+  bad("date", "2026-01-01", "P: date properties are not editable");
+  bad("multi_select", ["A"], "P: multi_select properties are not editable");
+});
+
+test("editableCell allows the simple types, and text only when rewriting it loses nothing", () => {
+  const seg = (extra = {}, content = "x") => ({ type: "text", text: { content, link: null }, annotations: { bold: false, italic: false, strikethrough: false, underline: false, code: false, color: "default" }, plain_text: content, href: null, ...extra });
+  const rich = (type, ...segs) => ({ type, [type]: segs });
+  for (const type of ["checkbox", "select", "status", "number", "url", "email", "phone_number"]) assert.equal(editableCell({ type }, { type }), true, type);
+  for (const type of ["date", "people", "relation", "formula", "rollup", "files", "multi_select", "created_time"]) assert.equal(editableCell({ type }, { type }), false, type);
+  assert.equal(editableCell({ type: "title" }, rich("title", seg(), seg({}, "y"))), true);
+  assert.equal(editableCell({ type: "rich_text" }, { type: "rich_text", rich_text: [] }), true);
+  // A segment without annotations at all is plain.
+  assert.equal(editableCell({ type: "rich_text" }, rich("rich_text", { type: "text", text: { content: "x" }, plain_text: "x" })), true);
+  const no = (...segs) => assert.equal(editableCell({ type: "rich_text" }, rich("rich_text", ...segs)), false);
+  no(seg({ annotations: { ...seg().annotations, bold: true } }));
+  no(seg({ annotations: { ...seg().annotations, code: true } }));
+  no(seg({ annotations: { ...seg().annotations, color: "red" } }));
+  no(seg({ text: { content: "x", link: { url: "https://a.b" } } }));
+  no(seg({ href: "https://a.b" }));
+  no({ type: "mention", mention: { type: "page" }, plain_text: "Page", annotations: seg().annotations });
+  no({ type: "equation", equation: { expression: "x" }, plain_text: "x" });
+  no(seg(), seg({}, "two\nlines"));
+});
+
+test("setProperty rejects an invalid value without running ntn or touching Notion", async () => {
+  reset(dbState());
+  let calls = 0;
+  const counted = client((...a) => { calls++; return exec(...a); }, ntn);
+  const before = readFileSync(stateFile, "utf8");
+  const cols = Object.fromEntries((await api.source(DB)).columns.map((c) => [c.name, c]));
+  const bad = [["Pick", "Gamma"], ["State", null], ["State", "Nope"], ["Qty", "abc"], ["Qty", Infinity], ["Done", "yes"], ["Name", 5], ["Link", 5]];
+  for (const [name, value] of bad) await assert.rejects(counted.setProperty(ROW, cols[name], value), { message: new RegExp(`^${name}: `) });
+  await assert.rejects(counted.setProperty(ROW, { name: "When", type: "date" }, "2026-01-01"), { message: "When: date properties are not editable" });
+  await assert.rejects(counted.setProperty("../x", cols.Qty, 1), { message: "Invalid page id: ../x" });
+  assert.equal(calls, 0);
+  // The fake creates unknown select options like Notion does, so an unchanged schema shows none was sent.
+  assert.equal(readFileSync(stateFile, "utf8"), before);
+});
+
+test("setProperty writes each type and the next read shows it", async () => {
+  reset(dbState());
+  const cols = Object.fromEntries((await api.source(DB)).columns.map((c) => [c.name, c]));
+  await api.setProperty(ROW, cols.Done, true);
+  await api.setProperty(ROW, cols.Qty, "42");
+  await api.setProperty(ROW, cols.Pick, "Beta");
+  await api.setProperty(ROW, cols.State, "Done");
+  await api.setProperty(ROW, cols.Note, "hello");
+  await api.setProperty(ROW, cols.Name, "Renamed");
+  await api.setProperty(ROW, cols.Link, "https://a.b");
+  assert.deepEqual(await text("Done"), { text: "✓" });
+  assert.deepEqual(await text("Qty"), { text: "42" });
+  assert.deepEqual(await text("Pick"), { text: "Beta", color: "red" });
+  assert.deepEqual(await text("State"), { text: "Done", color: "green" });
+  assert.deepEqual(await text("Note"), { text: "hello" });
+  assert.deepEqual(await text("Name"), { text: "Renamed" });
+  assert.deepEqual(await text("Link"), { text: "https://a.b" });
+  await api.setProperty(ROW, cols.Done, false);
+  await api.setProperty(ROW, cols.Qty, null);
+  await api.setProperty(ROW, cols.Pick, null);
+  await api.setProperty(ROW, cols.Note, "");
+  await api.setProperty(ROW, cols.Link, "");
+  assert.deepEqual(await text("Done"), { text: "" });
+  assert.deepEqual(await text("Qty"), { text: "" });
+  assert.deepEqual(await text("Pick"), { text: "" });
+  assert.deepEqual(await text("Note"), { text: "" });
+  assert.deepEqual(await text("Link"), { text: "" });
+  // No option was added to the schema along the way.
+  assert.equal((await column("Pick")).options.length, 2);
+});
+
+test("setProperty fails with Notion's first line for a property the data source lacks", async () => {
+  reset(dbState());
+  await assert.rejects(api.setProperty(ROW, { name: "Nope", type: "number" }, 1), { message: "error: Nope is not a property that exists." });
+  await assert.rejects(api.setProperty("bbbbbbbb-0000-0000-0000-000000000009", { name: "Qty", type: "number" }, 1), { message: /^error: Could not find page/ });
+});
+
+test("addRow creates a row under the data source and the next read has it", async () => {
+  reset(dbState());
+  const made = await api.addRow(DB, "Name", "Fresh");
+  assert.match(made.id, /^[0-9a-f-]{36}$/);
+  assert.match(made.url, /^https:\/\/www\.notion\.so\/[0-9a-f]{32}$/);
+  const { rows } = await api.source(DB);
+  assert.equal(rows.length, 2);
+  assert.deepEqual(cell(rows.find((r) => r.id === made.id).properties.Name), { text: "Fresh" });
+  assert.deepEqual(cell((await api.source(DB)).rows.find((r) => r.id === ROW).properties.Name), { text: "One" });
+  await assert.rejects(api.addRow(DB, "Nope", "x"), { message: "error: Nope is not a property that exists." });
+  await assert.rejects(api.addRow("0e5e82c3-1287-82a4-a3c8-07e20e40ff00", "Name", "x"), { message: /^error: Could not find data_source/ });
+  await assert.rejects(api.addRow("../x", "Name", "x"), { message: "Invalid data source id: ../x" });
+  assert.equal((await api.source(DB)).rows.length, 2);
 });
 
 test("cell shows each property type as text, with a colour for status and select", () => {

@@ -99,6 +99,49 @@ export function ago(iso, now = Date.now()) {
   return m < 60 ? `${m}m` : m < 1440 ? `${Math.floor(m / 60)}h` : m < 10080 ? `${Math.floor(m / 1440)}d` : iso.slice(0, 10);
 }
 
+const MAX_TEXT = 2000;
+
+/**
+ * The API value of one database property for a plain JS `value`, or a readable Error: Notion's
+ * own type errors start with a line that says nothing, and it creates unknown select options.
+ */
+export function propertyValue({ name, type, options }, value) {
+  const bad = (what) => new Error(`${name}: ${what}`);
+  const text = () => {
+    if (typeof value !== "string") throw bad("expected text");
+    if (value.length > MAX_TEXT) throw bad(`text is longer than ${MAX_TEXT} characters`);
+    return value;
+  };
+  switch (type) {
+    case "checkbox":
+      if (typeof value !== "boolean") throw bad("expected true or false");
+      return { checkbox: value };
+    case "number": {
+      const s = typeof value === "string" ? value.trim() : value;
+      const n = s === null || s === "" ? null : typeof s === "string" || typeof s === "number" ? Number(s) : NaN;
+      if (n !== null && !Number.isFinite(n)) throw bad(`"${value}" is not a number`);
+      return { number: n };
+    }
+    case "select":
+    case "status":
+      if (value === null && type === "select") return { select: null };
+      // A status cannot be cleared: Notion resets it to the default option instead.
+      if (value === null) throw bad("a status cannot be empty");
+      if (!options?.some((o) => o.name === value)) throw bad(`"${value}" is not one of its options`);
+      return { [type]: { name: value } };
+    case "title":
+    case "rich_text":
+      // `[]` is the empty value; a segment with empty content would stay as an empty text element.
+      return { [type]: text() ? [{ text: { content: value } }] : [] };
+    case "url":
+    case "email":
+    case "phone_number":
+      return { [type]: text() || null };
+    default:
+      throw bad(`${type} properties are not editable`);
+  }
+}
+
 /**
  * An `ntn` client over an `exec(cmd, args, opts) -> {code, stdout, stderr}` function.
  * Every failure becomes an Error with one readable line.
@@ -137,10 +180,25 @@ export function client(exec, ntn) {
     async source(id) {
       if (!validId(id)) throw new Error(`Invalid data source id: ${firstLine(id)}`);
       const [schema, q] = await Promise.all([json(["api", `v1/data_sources/${id}`]), json(["datasources", "query", id, "--limit", "50", "--json"])]);
-      const columns = Object.entries(schema.properties ?? {}).map(([name, p]) => ({ name, type: p.type }));
+      const columns = Object.entries(schema.properties ?? {}).map(([name, p]) => ({
+        name, type: p.type,
+        ...(p.type === "select" || p.type === "status" ? { options: (p[p.type]?.options ?? []).map((o) => ({ name: o.name, color: o.color })) } : {}),
+      }));
       columns.sort((a, b) => (b.type === "title") - (a.type === "title"));
       const rows = (q.results ?? []).map((r) => ({ id: r.id, url: r.url ?? null, properties: r.properties ?? {} }));
       return { columns, rows, more: Boolean(q.has_more) };
+    },
+    // `column` is an entry of `source(...).columns`; the value is checked before ntn runs.
+    async setProperty(pageId, column, value) {
+      if (!validId(pageId)) throw new Error(`Invalid page id: ${firstLine(pageId)}`);
+      const properties = { [column.name]: propertyValue(column, value) };
+      await run(ntn, ["api", `v1/pages/${pageId}`, "-X", "PATCH", "-d", JSON.stringify({ properties })]);
+    },
+    async addRow(sourceId, titleColumn, title) {
+      if (!validId(sourceId)) throw new Error(`Invalid data source id: ${firstLine(sourceId)}`);
+      const properties = { [titleColumn]: propertyValue({ name: titleColumn, type: "title" }, title) };
+      const p = await json(["api", "v1/pages", "-d", JSON.stringify({ parent: { type: "data_source_id", data_source_id: sourceId }, properties })]);
+      return { id: p.id, url: p.url ?? null };
     },
     // Pages through every data source the integration sees (at most 10 requests of 100).
     async sources() {

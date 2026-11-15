@@ -10,6 +10,24 @@ const save = () => writeFileSync(file, JSON.stringify(state));
 const page = (id, p) => ({ id, object: "page", last_edited_time: "2026-11-14T19:13:00.000Z",
   properties: { Name: { type: "title", title: [{ plain_text: p.title }] } } });
 const fail = (msg, code = 5) => { process.stderr.write(`error: ${msg}\nhint: more\n`); process.exit(code); };
+// Row property as the API returns it for a written value; like Notion, an unknown select option is created in the schema.
+const stored = (schema, type, v) => {
+  const rich = (a) => a.map((t) => ({ type: "text", text: { content: t.text.content, link: null }, annotations: {}, plain_text: t.text.content, href: null }));
+  if (type === "title" || type === "rich_text") return rich(v);
+  if (type !== "select" && type !== "status") return v;
+  const opts = (schema[type].options ??= []);
+  if (v === null) return type === "status" ? opts[0] : null;
+  let o = opts.find((x) => x.name.toLowerCase() === v.name.toLowerCase());
+  if (!o && type === "status") fail(`Invalid status option. Status option "${v.name}" does not exist".`);
+  if (!o) opts.push((o = { name: v.name, color: "default" }));
+  return { name: o.name, color: o.color };
+};
+const fill = (s, props) => Object.fromEntries(Object.entries(props).map(([name, body]) => {
+  const col = s.properties[name];
+  if (!col) fail(`${name} is not a property that exists.`);
+  if (!(col.type in body)) fail(`${name} is expected to be ${col.type}.`);
+  return [name, { id: col.id, type: col.type, [col.type]: stored(col, col.type, body[col.type]) }];
+}));
 const stripFrontmatter = (s) => s.replace(/^---\n[\s\S]*?\n?---\n/, "");
 
 if (state.fail) fail(state.fail);
@@ -63,6 +81,20 @@ if (group === "pages" && cmd === "get") {
   p.markdown = `${p.markdown}\n${body.insert_content.content.trimEnd()}`;
   save();
   console.log(JSON.stringify({ object: "page_markdown", id, markdown: p.markdown, truncated: false, unknown_block_ids: [] }));
+} else if (group === "api" && /^v1\/pages\/[^/]+$/.test(cmd) && flag("-X") === "PATCH") {
+  const id = cmd.split("/")[2], s = Object.values(state.sources ?? {}).find((x) => x.rows.some((r) => r.id === id));
+  if (!s) fail(`Could not find page with ID: ${id}`);
+  Object.assign(s.rows.find((r) => r.id === id).properties, fill(s, JSON.parse(flag("-d")).properties));
+  save();
+  console.log(JSON.stringify({ object: "page", id }));
+} else if (group === "api" && cmd === "v1/pages" && !rest.includes("-X")) {
+  const body = JSON.parse(flag("-d")), s = state.sources?.[body.parent?.data_source_id];
+  if (!s) fail(`Could not find data_source with ID: ${body.parent?.data_source_id}`);
+  const id = `11111111-0000-0000-0000-${String(s.rows.length).padStart(12, "0")}`;
+  const row = { id, url: `https://www.notion.so/${id.replace(/-/g, "")}`, properties: fill(s, body.properties) };
+  s.rows.push(row);
+  save();
+  console.log(JSON.stringify({ object: "page", id, url: row.url }));
 } else if (group === "api" && /^v1\/data_sources\/[^/]+$/.test(cmd) && !rest.includes("-X")) {
   const id = cmd.split("/")[2], s = state.sources?.[id];
   if (!s) fail(`Could not find data source with ID: ${id}`);

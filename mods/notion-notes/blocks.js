@@ -325,3 +325,17 @@ export function cell(property) {
   } catch { /* falls through to the dash */ }
   return { text: "—" };
 }
+
+const EDITABLE_CELLS = new Set(["checkbox", "select", "status", "title", "rich_text", "number", "url", "email", "phone_number"]);
+const PLAIN = { bold: false, italic: false, strikethrough: false, underline: false, code: false, color: "default" };
+
+/**
+ * Whether the read view may edit this cell. A title or rich text is editable only when every
+ * segment is unlinked, unformatted text on one line: the one-line field would drop the rest.
+ */
+export function editableCell(column, property) {
+  if (!EDITABLE_CELLS.has(column.type)) return false;
+  if (column.type !== "title" && column.type !== "rich_text") return true;
+  return (property?.[column.type] ?? []).every((t) => t.type === "text" && !t.text?.link && !t.href && !t.plain_text?.includes("\n")
+    && Object.entries(PLAIN).every(([k, v]) => (t.annotations?.[k] ?? v) === v));
+}

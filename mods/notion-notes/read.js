@@ -5,7 +5,7 @@ import { v_flex, h_flex, Checkbox, Collapsible, TextView, Input, InputState, Pop
 import { theme, run } from "herdr";
 import { NAME, REFRESH_EVERY } from "./store.js";
 import { readable } from "./notion.js";
-import { parseBlocks, children, toggleTodo, cell, replaceBlock, insertAfter, retype, continuation, editParts, nextEditable, slashQuery, commands, setType } from "./blocks.js";
+import { parseBlocks, children, toggleTodo, cell, replaceBlock, insertAfter, retype, continuation, editParts, nextEditable, slashQuery, commands, setType, editableCell } from "./blocks.js";
 
 const INDENT = 18;
 
@@ -19,6 +19,11 @@ const sources = new Map();
 // only the one that started the read.
 let sourcesRev = 0;
 export const sourcesChanged = () => sourcesRev;
+
+const tag = (t, text, color) => {
+  const ink = t[TAG_COLORS[color] ?? "muted"];
+  return div().min_w(0).truncate().rounded(10).border_1().border_color(ink).bg(t.raised).px(6).text_xs().text_color(ink).child(text);
+};
 
 // One TextView per block keeps bold, code and links working. Ids are the block's first line,
 // which stays unique and stable while a to-do is toggled.
@@ -116,6 +121,8 @@ export const readMethods = {
   // Saves and closes the open block. A stale one stays open with its draft unless `force`d
   // (the page or view is going away). True when nothing is left open.
   endEdit(cx, force = false) {
+    // Every path that ends or switches block editing also ends a cell edit, so only one of the two is ever open.
+    this.endCell(cx);
     if (!this.editing) return true;
     const ok = this.commit();
     if (ok || force) this.closeEdit(cx);
@@ -223,6 +230,103 @@ export const readMethods = {
           .on_click((_e, cx) => { this.closeEdit(cx); cx.notify(); }).child("Discard"))));
   },
 
+  // Closes the open cell edit (a select menu or an input) without saving.
+  closeCell(cx) {
+    const c = this.cellEdit;
+    if (!c) return;
+    this.cellEdit = null;
+    if (c.state) { if (cx) cx.timer.after(300, () => c.state.release()); else c.state.release(); }
+  },
+
+  // Saves and closes the open cell edit; with no `cx` (the view is going away) a draft is dropped.
+  endCell(cx) {
+    const c = this.cellEdit, value = c?.state?.value();
+    this.closeCell(cx);
+    if (value === undefined || !cx) return;
+    if (!c.row) { if (value.trim()) this.addRow(c, value.trim(), cx); } else if (value !== c.text) this.writeCell(c, value, cx);
+    cx.notify();
+  },
+
+  // Runs a write on the serial Notion queue. Nothing is drawn before Notion answers: success marks
+  // the table stale so the next render reads it again, failure shows under its row until a read succeeds.
+  mutate(c, key, job, cx, done) {
+    const e = c.e;
+    (e.writing ??= new Set()).add(key);
+    cx.spawn(async (cx) => {
+      try {
+        const r = await this.net(job);
+        e.at = 0;
+        done?.(r);
+      } catch (err) {
+        (e.errors ??= new Map()).set(c.row?.id ?? key, err.message);
+      } finally {
+        e.writing.delete(key);
+        sourcesRev++;
+        cx.notify();
+      }
+    });
+  },
+
+  writeCell(c, value, cx) {
+    this.mutate(c, c.id, () => this.api.setProperty(c.row.id, c.col, value), cx);
+  },
+
+  addRow(c, title, cx) {
+    const m = this.meta;
+    this.mutate(c, c.id, () => this.api.addRow(c.source, c.col.name, title), cx, (made) => {
+      if (this.meta === m) this.openPage(made.id, made.url, {}, cx);
+    });
+  },
+
+  openInput(c, cx) {
+    const state = InputState.new({ value: c.text });
+    const done = (_e, cx) => { if (this.cellEdit?.state === state) { this.endCell(cx); cx.notify(); } };
+    state.on("blur", done);
+    state.on("submit", done);
+    this.fieldFocus ??= cx.focus_handle();
+    this.cellEdit = { ...c, state };
+    state.focus();
+  },
+
+  // A click on a cell edits it instead of opening the row; ⌘-click is left to the row.
+  clickCell(c, e, cx) {
+    if (e.modifiers?.platform) return;
+    cx.stop_propagation();
+    // The press that closes an open menu arrives just before this click: it must not reopen it.
+    const again = this.menuClosed?.id === c.id && Date.now() - this.menuClosed.at < 400;
+    if (again || c.e.writing?.has(c.id) || !this.endEdit(cx)) return;
+    if (c.col.type === "checkbox") this.writeCell(c, !c.prop?.checkbox, cx);
+    else if (c.col.type === "select" || c.col.type === "status") this.cellEdit = c;
+    else this.openInput(c, cx);
+    cx.notify();
+  },
+
+  pickOption(c, name, cx) {
+    cx.stop_propagation();
+    this.closeCell(cx);
+    if ((name ?? "") !== c.text) this.writeCell(c, name, cx);
+    cx.notify();
+  },
+
+  cellInput(t) {
+    return h_flex().id("nn-cell-input").flex_1().min_w(0).track_focus(this.fieldFocus)
+      .on_click((_e, cx) => cx.stop_propagation())
+      .on_key_down((e, cx) => { if (e.keystroke === "escape") { this.closeCell(cx); cx.notify(); } })
+      .child(Input.new(this.cellEdit.state).flex_1().text_size(12).text_color(t.foreground));
+  },
+
+  // The options of a select or status cell, each drawn as its tag; only select can be emptied.
+  cellMenu(c, t) {
+    const items = [...(c.col.type === "select" ? [{ name: null }] : []), ...c.col.options];
+    return v_flex().id(`${c.id}-menu`).w(200).p(4).gap(1).rounded(8).border_1().border_color(t.border).bg(t.popover)
+      .on_click((_e, cx) => cx.stop_propagation())
+      .on_mouse_down_out((_e, cx) => { this.menuClosed = { id: c.id, at: Date.now() }; this.closeCell(cx); cx.notify(); })
+      .children(items.map((o) => h_flex().id(`${c.id}-o-${o.name ?? ""}`).h(26).px(8).items_center().rounded(4).cursor_pointer()
+        .when((o.name ?? "") === c.text, (r) => r.bg(t.hover)).hover((s) => s.bg(t.hover))
+        .on_click((_e, cx) => this.pickOption(c, o.name, cx))
+        .child(o.name === null ? div().text_xs().text_color(t.muted).child("Empty") : tag(t, o.name, o.color))));
+  },
+
   // A page opens in a pane to the right, ⌘-click opens it in Notion.
   openPage(id, url, e, cx) {
     if (e.modifiers?.platform) this.openInNotion(cx, id, url);
@@ -249,6 +353,7 @@ export const readMethods = {
           await this.setup;
           e.data = await this.api.source(block.source);
           e.error = null;
+          e.errors = null;
         } catch (err) {
           e.error = err.message;
         } finally {
@@ -261,21 +366,35 @@ export const readMethods = {
     const note = (text, color) => div().flex_none().px(6).text_xs().text_color(color).child(text);
     const d = e.data;
     if (!d) return [e.error ? note(e.error, t.ansi1) : note("Loading…", t.dim)];
-    const cells = (cols, props) => cols.map((col, c) => {
-      const { text, color } = props(col);
-      const ink = t[TAG_COLORS[color] ?? "muted"];
-      return h_flex().flex_1().flex_grow(c === 0 ? 2 : 1).min_w(0).overflow_hidden()
-        .child(color !== undefined && text
-          ? div().min_w(0).truncate().rounded(10).border_1().border_color(ink).bg(t.raised).px(6).text_xs().text_color(ink).child(text)
-          : div().min_w(0).truncate().child(text));
+    const ro = Boolean(this.meta?.readonly), title = d.columns.find((col) => col.type === "title");
+    // The cell's own state is named by the table's first line and the row, so two tables never share one.
+    const cells = (r) => d.columns.map((col, c) => {
+      const prop = r.properties[col.name], { text, color } = cell(prop);
+      const id = `nn-c-${block.from}-${r.id}-${c}`, edit = !ro && editableCell(col, prop);
+      const menu = edit && (col.type === "select" || col.type === "status");
+      const view = (el) => el.flex_1().flex_grow(c === 0 ? 2 : 1).min_w(0).overflow_hidden().when(e.writing?.has(id), (v) => v.opacity(0.5));
+      const body = color !== undefined && text ? tag(t, text, color)
+        : col.type === "checkbox" && edit && !text ? div().text_color(t.muted).child("☐") : div().min_w(0).truncate().child(text);
+      if (!edit) return view(h_flex()).child(body);
+      const mine = this.cellEdit?.id === id, data = { id, e, row: r, col, prop, text };
+      if (mine && this.cellEdit.state) return view(h_flex()).child(this.cellInput(t));
+      const click = h_flex().id(id).w_full().min_w(0).cursor_pointer().on_click((ev, cx) => this.clickCell(data, ev, cx)).child(body);
+      return view(h_flex()).child(menu ? Popup.new(`${id}-pop`, click).anchor("bottom_left").w_full().min_w(0)
+        .when(mine, (p) => p.content(this.cellMenu(data, t))) : click);
     });
+    const adding = `nn-n-${block.from}`;
+    const newRow = () => this.cellEdit?.id === adding ? h_flex().flex_none().px(6).py(2).child(this.cellInput(t))
+      : e.writing?.has(adding) ? note("Creating row…", t.muted)
+      : h_flex().id(adding).flex_none().px(6).py(4).cursor_pointer().text_xs().text_color(t.muted)
+        .on_click((ev, cx) => this.clickCell({ id: adding, e, source: block.source, col: title, prop: {}, text: "" }, ev, cx)).child("+ New");
     return [
       h_flex().flex_none().px(6).py(2).gap(8).border_b(1).border_color(t.border).text_xs().text_color(t.muted)
         .children(d.columns.map((col, c) => div().flex_1().flex_grow(c === 0 ? 2 : 1).min_w(0).truncate().child(col.name))),
-      ...d.rows.map((r, i) => h_flex().id(`nn-r-${block.from}-${i}`).flex_none().min_h(26).px(6).gap(8).items_center().rounded(6)
+      ...d.rows.flatMap((r, i) => [h_flex().id(`nn-r-${block.from}-${i}`).flex_none().min_h(26).px(6).gap(8).items_center().rounded(6)
         .cursor_pointer().hover((s) => s.bg(t.hover))
         .on_click((ev, cx) => this.openPage(r.id, r.url, ev, cx))
-        .children(cells(d.columns, (col) => cell(r.properties[col.name])))),
+        .children(cells(r)), ...(e.errors?.has(r.id) ? [note(e.errors.get(r.id), t.ansi1)] : [])]),
+      ...(!ro && title ? [newRow(), ...(e.errors?.has(adding) ? [note(e.errors.get(adding), t.ansi1)] : [])] : []),
       ...(d.more ? [h_flex().id(`nn-m-${block.from}`).flex_none().px(6).py(4).cursor_pointer().text_xs().text_color(t.muted)
         .on_click((ev, cx) => this.openBlock(block, ev, cx)).child("Showing first 50 · Open in Notion")] : []),
       ...(e.error ? [note(e.error, t.ansi1)] : []),
