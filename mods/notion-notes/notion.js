@@ -131,6 +131,17 @@ export function client(exec, ntn) {
         sort: { timestamp: "last_edited_time", direction: "descending" },
         page_size: 50,
       })])),
+    // Schema and first 50 rows. The API does not expose a view's column order, so the title
+    // column comes first and the rest follow the schema's own order.
+    async source(id) {
+      if (!validId(id)) throw new Error(`Invalid data source id: ${firstLine(id)}`);
+      const schema = await json(["api", `v1/data_sources/${id}`]);
+      const q = await json(["datasources", "query", id, "--limit", "50", "--json"]);
+      const columns = Object.entries(schema.properties ?? {}).map(([name, p]) => ({ name, type: p.type }));
+      columns.sort((a, b) => (b.type === "title") - (a.type === "title"));
+      const rows = (q.results ?? []).map((r) => ({ id: r.id, url: r.url ?? null, properties: r.properties ?? {} }));
+      return { title: plain(schema.title), columns, rows, more: Boolean(q.has_more) };
+    },
     // Pages through every data source the integration sees (at most 10 requests of 100).
     async sources() {
       const results = [];

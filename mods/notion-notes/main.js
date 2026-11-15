@@ -7,15 +7,13 @@ import { v_flex, h_flex, Editor, EditorState } from "gpui-base";
 import { exec, theme, settings, props, run, shared, layout, readTextFile } from "herdr";
 import { client, upload, serial, refreshDecision, pageUrl, validId } from "./notion.js";
 import { pickerMethods } from "./picker.js";
-import { readMethods } from "./read.js";
+import { readMethods, REFRESH_EVERY } from "./read.js";
 import { NAME, MAP_REV, dir, mapPath, cachePath, metaPath, uploadPath, spaceKey, spacePage, readJson, put, loadSettings } from "./store.js";
 import * as fs from "fs/promises";
 
 const UPLOAD_AFTER = 3000;
 // readTextFile reads at most 1 MiB, and UTF-8 needs up to 3 bytes per UTF-16 unit.
 const MAX_CHARS = 340000;
-// Quick tab or space switching reuses the local copy instead of starting `ntn` each time.
-const REFRESH_EVERY = 15000;
 
 const putMeta = (id, m) => put(metaPath(id), JSON.stringify({ base: m.base, title: m.title, url: m.url, pending: m.pending, partial: m.partial }));
 // The meta goes first: a pending flag without the newest text keeps older local edits,

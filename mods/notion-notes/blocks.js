@@ -110,3 +110,34 @@ export function parseBlocks(text) {
   }
   return blocks;
 }
+
+const join = (rich) => rich.map((t) => t.plain_text).join("");
+
+/**
+ * A database row's property as `{ text, color? }`; `color` is a Notion colour name, only for
+ * status and select (a multi-select shows its names as plain text). Unsupported types and
+ * malformed properties give "—"; it never throws.
+ */
+export function cell(property) {
+  try {
+    const v = property[property.type];
+    if (v === undefined) return { text: "—" };
+    switch (property.type) {
+      case "title":
+      case "rich_text": return { text: join(v) };
+      case "status":
+      case "select": return v ? { text: v.name, color: v.color } : { text: "" };
+      case "multi_select":
+      case "people": return { text: v.map((x) => x.name).join(", ") };
+      case "checkbox": return { text: v ? "✓" : "" };
+      case "number": return { text: v === null ? "" : String(v) };
+      case "date":
+        if (v && typeof v.start !== "string") break;
+        return { text: v ? (v.end ? `${v.start} → ${v.end}` : v.start) : "" };
+      case "url":
+      case "email":
+      case "phone_number": return { text: v ?? "" };
+    }
+  } catch { /* falls through to the dash */ }
+  return { text: "—" };
+}

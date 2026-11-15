@@ -34,6 +34,9 @@ if (group === "pages" && cmd === "get") {
   state.pages[id] = { title, markdown: "", parent: flag("--parent") };
   save();
   console.log(JSON.stringify(page(id, state.pages[id])));
+} else if (group === "datasources" && cmd === "query" && state.sources?.[rest[0]]) {
+  const s = state.sources[rest[0]];
+  console.log(JSON.stringify({ has_more: s.more ?? false, results: s.rows }));
 } else if (group === "datasources" && cmd === "query") {
   console.log(JSON.stringify({ has_more: false, results: Object.entries(state.pages).map(([id, p]) => page(id, p)) }));
 } else if (group === "api" && /^v1\/pages\/[^/]+\/markdown$/.test(cmd) && flag("-X") === "PATCH") {
@@ -43,6 +46,10 @@ if (group === "pages" && cmd === "get") {
   p.markdown = `${p.markdown}\n${body.insert_content.content.trimEnd()}`;
   save();
   console.log(JSON.stringify({ object: "page_markdown", id, markdown: p.markdown, truncated: false, unknown_block_ids: [] }));
+} else if (group === "api" && /^v1\/data_sources\/[^/]+$/.test(cmd) && !rest.includes("-X")) {
+  const id = cmd.split("/")[2], s = state.sources?.[id];
+  if (!s) fail(`Could not find data source with ID: ${id}`);
+  console.log(JSON.stringify({ object: "data_source", id, title: [{ plain_text: s.title }], properties: s.properties }));
 } else if (group === "api" && cmd === "v1/search") {
   const q = JSON.parse(flag("-d")).query.toLowerCase();
   const hits = Object.entries(state.pages).filter(([, p]) => p.title.toLowerCase().includes(q));

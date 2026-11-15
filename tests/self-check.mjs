@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { client, upload, serial, titleOf, refreshDecision, pages, ago, pageUrl, readable, mappedPage, sourceNames, canonicalId } from "../mods/notion-notes/notion.js";
-import { parseBlocks, todos, toggleTodo } from "../mods/notion-notes/blocks.js";
+import { parseBlocks, todos, toggleTodo, cell } from "../mods/notion-notes/blocks.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ntn = join(here, "fake-ntn.mjs");
@@ -273,4 +273,63 @@ test("a page URL without 32 hex digits has no id, and a database without a data 
   // Attribute order does not matter.
   const [e] = parseBlocks('<database data-source-url="collection://0e5e82c3-1287-82a4-a3c8-07e20e40ffea" url="u">T</database>');
   assert.equal(e.source, "0e5e82c3-1287-82a4-a3c8-07e20e40ffea");
+});
+
+test("source returns the title column first, then the schema's order, with rows and the more flag", async () => {
+  const props = (n, s) => ({ Nombre: { id: "title", type: "title", title: [{ plain_text: n }] }, Estado: { id: "s", type: "status", status: { name: s, color: "blue" } } });
+  reset({ pages: {}, sources: { [ID]: {
+    title: "Tasks",
+    // The schema lists Estado before Nombre; the title column still comes first.
+    properties: { Estado: { id: "s", name: "Estado", type: "status" }, Fecha: { id: "d", name: "Fecha", type: "date" }, Nombre: { id: "title", name: "Nombre", type: "title" } },
+    rows: [{ id: "r1", url: "https://www.notion.so/r1", properties: props("One", "Doing") }],
+    more: true,
+  } } });
+  assert.deepEqual(await api.source(ID), {
+    title: "Tasks",
+    columns: [{ name: "Nombre", type: "title" }, { name: "Estado", type: "status" }, { name: "Fecha", type: "date" }],
+    rows: [{ id: "r1", url: "https://www.notion.so/r1", properties: props("One", "Doing") }],
+    more: true,
+  });
+});
+
+test("source fails with one readable line for a missing data source, and never runs ntn for an invalid id", async () => {
+  reset({ pages: {} });
+  await assert.rejects(api.source(ID), { message: `error: Could not find data source with ID: ${ID}` });
+  await assert.rejects(api.source("../search"), { message: "Invalid data source id: ../search" });
+  // Existing pages keep answering a plain query when no source is registered.
+  assert.deepEqual(await api.list("ds"), []);
+});
+
+test("cell shows each property type as text, with a colour for status and select", () => {
+  const rich = (...t) => t.map((plain_text) => ({ plain_text }));
+  assert.deepEqual(cell({ type: "title", title: rich("A", "B") }), { text: "AB" });
+  assert.deepEqual(cell({ type: "title", title: [] }), { text: "" });
+  assert.deepEqual(cell({ type: "rich_text", rich_text: rich("x ", "y") }), { text: "x y" });
+  assert.deepEqual(cell({ type: "status", status: { name: "Doing", color: "blue" } }), { text: "Doing", color: "blue" });
+  assert.deepEqual(cell({ type: "status", status: null }), { text: "" });
+  assert.deepEqual(cell({ type: "select", select: { name: "High", color: "red" } }), { text: "High", color: "red" });
+  assert.deepEqual(cell({ type: "select", select: null }), { text: "" });
+  assert.deepEqual(cell({ type: "multi_select", multi_select: [{ name: "a", color: "red" }, { name: "b", color: "green" }] }), { text: "a, b" });
+  assert.deepEqual(cell({ type: "multi_select", multi_select: [] }), { text: "" });
+  assert.deepEqual(cell({ type: "checkbox", checkbox: true }), { text: "✓" });
+  assert.deepEqual(cell({ type: "checkbox", checkbox: false }), { text: "" });
+  assert.deepEqual(cell({ type: "number", number: 3.5 }), { text: "3.5" });
+  assert.deepEqual(cell({ type: "number", number: 0 }), { text: "0" });
+  assert.deepEqual(cell({ type: "number", number: null }), { text: "" });
+  assert.deepEqual(cell({ type: "date", date: { start: "2026-11-14", end: null } }), { text: "2026-11-14" });
+  assert.deepEqual(cell({ type: "date", date: { start: "2026-11-14", end: "2026-11-16" } }), { text: "2026-11-14 → 2026-11-16" });
+  assert.deepEqual(cell({ type: "date", date: null }), { text: "" });
+  assert.deepEqual(cell({ type: "people", people: [{ name: "Ana" }, { name: "Luis" }] }), { text: "Ana, Luis" });
+  assert.deepEqual(cell({ type: "people", people: [] }), { text: "" });
+  assert.deepEqual(cell({ type: "url", url: "https://x.test" }), { text: "https://x.test" });
+  assert.deepEqual(cell({ type: "url", url: null }), { text: "" });
+  assert.deepEqual(cell({ type: "email", email: "a@b.c" }), { text: "a@b.c" });
+  assert.deepEqual(cell({ type: "phone_number", phone_number: null }), { text: "" });
+});
+
+test("cell shows a dash for unsupported or malformed properties and never throws", () => {
+  assert.deepEqual(cell({ type: "formula", formula: { type: "string", string: "x" } }), { text: "—" });
+  for (const bad of [undefined, null, "text", 3, {}, { type: "status" }, { type: "people", people: [null] }, { type: "date", date: {} }]) {
+    assert.deepEqual(cell(bad), { text: "—" });
+  }
 });
