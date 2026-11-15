@@ -31,12 +31,32 @@ A Herdr Desktop mod that opens a Notion page as an editable markdown note, throu
 ## Read mode
 
 The header's **Read** / **Edit** button switches the note (the choice is remembered) between
-**Read**, a view drawn block by block, and **Edit**, the plain markdown text and the only place to
-change anything but to-dos. What you can click in Read:
+**Read**, a view drawn block by block, and **Edit**, the plain markdown text. Read changes the
+note in the ways below; everything else needs Edit. Read-only notes cannot be changed in Read.
 
+- **Text blocks**: click a paragraph, heading, bullet, numbered item, to-do, one-line quote or empty
+  line to edit it in a one-line field that holds only its text (the `#`, `-`, `1.` or `> ` stays
+  outside the field). ⌘-click is left alone. The field saves when it loses focus or you press `Esc`;
+  the edit then uploads like any other (see Sync rules).
+  - `Enter` saves and starts a new block below, continuing a bullet, numbered or to-do list; on an
+    empty list item it turns the item into a paragraph.
+  - `Backspace` on an empty field turns a list item, heading or quote into a paragraph, and
+    deletes an empty paragraph, moving into the end of the block above.
+  - `↑` / `↓` save and move to the previous or next editable block.
+  - If the block changed in Notion while open, the field stays open with **This block changed in
+    Notion; copy your text or discard it** and a **Discard** button; nothing is overwritten.
+- **`/` menu**: typing `/` at the start of the field or after a space opens a menu of Text,
+  Heading 1-3, To-do, Bulleted list, Numbered list, Quote, Divider and Page; keep typing to filter
+  (English and Spanish words), `↑` / `↓` and `Enter` or a click to pick, `Esc` to close. A type
+  keeps the block's text; Divider adds a `---` line below. **Page** (`/page`) creates a subpage
+  titled with the rest of the block's text (or "Untitled"), puts its link in place of the block and
+  opens it in a pane to the right. Code is not offered.
 - **To-dos**: the checkbox marks or unmarks the item in the note, and the edit uploads like any
-  other (see Sync rules). Done items show struck through. Not clickable in read-only notes, nor
-  for to-dos nested inside callouts, toggles or other tags.
+  other. Done items show struck through. Not clickable in read-only notes, nor for to-dos nested
+  inside other tags (columns...).
+- **Callouts and toggles**: callouts are drawn as boxes with their icon and toggles as collapsible
+  sections (their open state is not remembered). Their to-dos can be ticked; their other text is
+  shown but not editable in Read. One whose tags share a line with text falls back to plain markdown.
 - **Subpages**: click opens the page in a pane to the right, ⌘-click opens it in Notion.
 - **Inline databases**: a table of the first 50 rows, title column first and then the schema's order
   (the API does not give a view's column order, so filters, sorting and hidden columns of the
@@ -44,9 +64,21 @@ change anything but to-dos. What you can click in Read:
   `status` and `select` values show as tags in theme colours. With more rows the footer reads
   "Showing first 50 · Open in Notion". A linked database (no data source of its own) shows as a link
   only. If the rows cannot be read the block shows one error line and the rest of the page still renders.
+  - Click a cell to edit it (⌘-click still opens the row): a checkbox flips; `select` and `status`
+    open a menu of the schema's options (only `select` has an empty choice, because Notion resets
+    a cleared status to its default); `title`, `rich_text`, `number`, `url`, `email` and
+    `phone_number` open a field where `Enter` or leaving it saves and `Esc` discards. A title or
+    rich text is editable only when it is plain, unformatted, unlinked text on one line, since
+    the field would drop the rest. Other types stay read-only.
+  - Values are checked before they are sent: Notion silently adds a `select` option that does not
+    exist, so only the schema's options are accepted, and a number must be finite.
+  - **+ New** at the end of the table asks for a title, creates the row and opens it in a pane.
+  - A cell is drawn dimmed until Notion confirms the write, then the table is read again; an error
+    shows under its row.
 
-Callouts, toggles/details, columns, simple tables and other tags are not drawn specially: they show
-as the plain markdown fallback, with child pages and databases inside them as links.
+Still needs Edit: code blocks, multi-line quotes, dividers, tables, the text inside callouts and
+toggles, other tags (columns...) and selecting text across blocks. Columns, simple tables and
+other tags show as the plain markdown fallback, with child pages and databases inside them as links.
 
 ## Appending from an agent
 
@@ -85,12 +117,16 @@ Only `ntn`, with ids and titles passed as separate arguments, never inside a she
 - `ntn pages get <id> --json` to open or refresh a note and before and after each upload;
 - `ntn pages edit <id>` through `sh -c '"$1" pages edit "$2" < "$3"'` (exec has no stdin).
   It never passes `--allow-deleting-content`, so child pages and databases are kept;
-- `ntn pages create --json --content <frontmatter title> [--parent <ref>]`;
+- `ntn pages create --json --content=<frontmatter title> [--parent <ref>]` for the picker's new
+  page and for `/page`, which creates under `--parent page:<id>` (`--content=…` is joined with `=`
+  because `ntn` takes a separate value starting with `---` for a flag);
 - `ntn datasources query <id> --limit 50 --json` for the picker's list and for an inline
   database's rows in Read mode, `ntn api v1/data_sources/<id>` for that database's columns, and
   `ntn api v1/search -d <json>`.
 - once per app session, when the picker first opens, `ntn api v1/search` filtered to data
   sources, to name database parents in picker rows (failure is silent; rows show without it).
+- `ntn api v1/pages/<id> -X PATCH -d <json>` to write one cell of a database row, and
+  `ntn api v1/pages -d <json>` (POST) to add a row with its title.
 
 The header's open button runs `open notion://www.notion.so/<id>` (the Notion app); if that
 fails it uses, for the rest of the session, `open` with the page's own https URL when it is on
@@ -133,9 +169,17 @@ would reload the mod):
 - Closing Herdr leaves unsent edits marked `pending`. The first panel copy of the next app
   session uploads every pending note, one at a time and with the same conflict check; a
   conflict or failure stays pending, without an error until that note is opened.
-- Marking a to-do in Read mode uploads the whole page through `ntn pages edit`, like any edit. If
-  Notion recreates blocks on upload, comments attached to blocks could be lost; this has not been
-  tested, so try it on a scratch page with a block comment before using real pages.
+- Marking a to-do and saving a block in Read mode upload the whole page through `ntn pages edit`,
+  like any edit (saves within 3 s of each other go up together). If Notion recreates blocks on
+  upload, comments attached to blocks could be lost; this has not been tested, so try it on a
+  scratch page with a block comment before using real pages.
+- `/page` creates the subpage, reads the parent again and takes that markdown as `base` (Notion
+  appends the new `<page>` line to it), then uploads the note with the block replaced by that
+  link, which moves the line into place. If the parent changed in some other way meanwhile, `base`
+  is left alone and the upload reports the conflict.
+- Cell edits and new rows go straight to Notion through the API. They are not part of the page
+  upload or its conflict check, and the last write wins.
+- A refresh does not apply while a block is open for editing or a subpage is being created.
 - A note starting with `---` is uploaded behind an empty frontmatter block, because
   `ntn pages edit` strips a leading frontmatter.
 
