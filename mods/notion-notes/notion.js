@@ -155,8 +155,9 @@ export function client(exec, ntn) {
       return sourceNames({ results });
     },
     async create(title, parent) {
-      // JSON strings are valid YAML, so any title survives the frontmatter.
-      const args = ["pages", "create", "--json", "--content", `---\ntitle: ${JSON.stringify(title)}\n---\n`];
+      // JSON strings are valid YAML, so any title survives the frontmatter. The value is joined
+      // with `=`: as a separate argument, ntn takes its leading `---` for an unknown flag.
+      const args = ["pages", "create", "--json", `--content=---\ntitle: ${JSON.stringify(title)}\n---\n`];
       if (parent) args.push("--parent", parent);
       const p = await json(args);
       return { id: p.id, title: titleOf(p) };

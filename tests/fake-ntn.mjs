@@ -13,7 +13,14 @@ const stripFrontmatter = (s) => s.replace(/^---\n[\s\S]*?\n?---\n/, "");
 
 if (state.fail) fail(state.fail);
 const [group, cmd, ...rest] = process.argv.slice(2);
-const flag = (name) => (rest.includes(name) ? rest[rest.indexOf(name) + 1] : null);
+// Like the real CLI's parser: a separate value that starts with "-" is taken for an unknown flag.
+const flag = (name) => {
+  const joined = rest.find((a) => a.startsWith(`${name}=`));
+  if (joined) return joined.slice(name.length + 1);
+  const v = rest.includes(name) ? rest[rest.indexOf(name) + 1] : null;
+  if (v?.startsWith("-")) fail(`unexpected argument '${v.split("\n")[0]}' found`, 2);
+  return v;
+};
 if (group === "pages" && cmd === "get") {
   const p = state.pages[rest[0]];
   if (!p) fail(`Could not find page with ID: ${rest[0]}`);
