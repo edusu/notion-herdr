@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { client, upload, serial, titleOf, refreshDecision, pages, ago, pageUrl, readable, mappedPage, sourceNames, canonicalId } from "../mods/notion-notes/notion.js";
-import { parseBlocks, todos, toggleTodo, cell, replaceBlock, insertAfter, retype, continuation, slashQuery, commands, setType, editParts, nextEditable, appendedPage } from "../mods/notion-notes/blocks.js";
+import { parseBlocks, children, todos, toggleTodo, cell, replaceBlock, insertAfter, retype, continuation, slashQuery, commands, setType, editParts, nextEditable, appendedPage } from "../mods/notion-notes/blocks.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ntn = join(here, "fake-ntn.mjs");
@@ -257,6 +257,79 @@ test("to-dos: nested items parse, code fences are ignored, a stale line is not f
   // A refresh inserted a line: index 1 now holds another to-do, so nothing flips.
   assert.equal(toggleTodo("# Tasks\n- [ ] new\n- [ ] one", 1, "one"), null);
   assert.equal(toggleTodo(text, 0, "one"), null);
+});
+
+// Notion's markdown for containers: children one tab deeper, a toggle titled by its <summary>.
+const NESTED = [
+  "# Plan",
+  '<callout icon="💡" color="gray_bg">',
+  "\tRemember this",
+  "\t- [ ] in callout",
+  "</callout>",
+  "<details>",
+  "<summary>Outer **toggle**</summary>",
+  "\t- [x] in outer",
+  "\t<details>",
+  "\t<summary>Inner</summary>",
+  "\t\t- [ ] in inner",
+  "\t</details>",
+  "</details>",
+  "- [ ] top",
+].join("\n");
+
+test("to-dos inside a callout and inside a toggle nested in another toggle are found and flipped", () => {
+  assert.deepEqual(todos(NESTED).map((t) => [t.line, t.done, t.label]), [[3, false, "in callout"], [7, true, "in outer"], [10, false, "in inner"], [13, false, "top"]]);
+  assert.equal(toggleTodo(NESTED, 3, "in callout"), NESTED.replace("- [ ] in callout", "- [x] in callout"));
+  assert.equal(toggleTodo(NESTED, 10, "in inner"), NESTED.replace("- [ ] in inner", "- [x] in inner"));
+  assert.equal(toggleTodo(NESTED, 7, "in outer"), NESTED.replace("[x] in outer", "[ ] in outer"));
+  assert.equal(toggleTodo(NESTED, 3, "in inner"), null);
+});
+
+test("containers do not change the top-level blocks or their round trip", () => {
+  assert.deepEqual(parseBlocks(NESTED).map((b) => [b.type, b.from, b.to]), [["heading", 0, 0], ["raw", 1, 4], ["raw", 5, 12], ["todo", 13, 13]]);
+  assert.equal(parseBlocks(NESTED).map((b) => b.raw).join("\n"), NESTED);
+});
+
+test("children are parsed again with line numbers of the full text, and recurse", () => {
+  const [, callout, outer] = parseBlocks(NESTED);
+  const c = children(callout);
+  assert.equal(c.icon, "💡");
+  assert.equal(c.summary, null);
+  assert.deepEqual(c.blocks.map((b) => [b.type, b.from, b.to]), [["paragraph", 2, 2], ["todo", 3, 3]]);
+  assert.equal(NESTED.split("\n")[c.blocks[1].from], c.blocks[1].raw);
+  const o = children(outer);
+  assert.deepEqual(o.blocks.map((b) => [b.type, b.from, b.to, b.tag]), [["todo", 7, 7, undefined], ["raw", 8, 11, "details"]]);
+  const inner = children(o.blocks[1]);
+  assert.equal(inner.summary, "Inner");
+  assert.deepEqual(inner.blocks.map((b) => [b.type, b.from, b.label]), [["todo", 10, "in inner"]]);
+});
+
+test("a <summary> is the toggle's title, not a child, and is optional", () => {
+  const c = children(parseBlocks("<details>\n<summary>Title</summary>\n- [ ] a\n</details>")[0]);
+  assert.deepEqual([c.summary, c.blocks.map((b) => b.type)], ["Title", ["todo"]]);
+  const bare = children(parseBlocks("<details>\n- [ ] a\n</details>")[0]);
+  assert.deepEqual([bare.summary, bare.blocks.length], [null, 1]);
+});
+
+test("children without indentation, an unclosed container and an empty one are tolerated", () => {
+  assert.deepEqual(todos("<callout>\n- [ ] flat\n</callout>").map((t) => t.line), [1]);
+  assert.deepEqual(todos("<callout>\n- [ ] never closed").map((t) => t.line), [1]);
+  assert.deepEqual(children(parseBlocks("<callout>\n</callout>")[0]).blocks, []);
+});
+
+test("children is null unless the block is a callout or toggle whose lines are all body", () => {
+  const first = (t) => children(parseBlocks(t)[0]);
+  assert.equal(first("plain"), null);
+  assert.equal(first("<columns>\n<column>\n- [ ] a\n</column>\n</columns>"), null);
+  assert.equal(first("<callout>one line</callout>"), null);
+  assert.equal(first("<callout>text\n- [ ] a\n</callout>"), null);
+  assert.equal(first("<details>\n- [ ] a\ntext</details>"), null);
+});
+
+test("a to-do in a fence inside a toggle, or inside another tag, does not count", () => {
+  assert.deepEqual(todos("<details>\n<summary>s</summary>\n```\n- [ ] in code\n```\n- [ ] real\n</details>").map((t) => t.line), [5]);
+  assert.deepEqual(todos("<columns>\n<column>\n- [ ] in column\n</column>\n</columns>"), []);
+  assert.deepEqual(todos("<callout>\n<columns>\n- [ ] deep\n</columns>\n</callout>"), []);
 });
 
 // Shaped like the user's Tasks page: child page, empty block, inline database, then ordinary markdown.

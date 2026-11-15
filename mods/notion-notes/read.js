@@ -1,11 +1,11 @@
 // The read view: the note drawn block by block from parseBlocks. It only changes text through
 // toggleTodo and the open block's write-back on the editor, so uploads still send the editor's text and never one rebuilt from blocks.
 import { div } from "gpui-kit";
-import { v_flex, h_flex, Checkbox, TextView, Input, InputState, Popup } from "gpui-base";
+import { v_flex, h_flex, Checkbox, Collapsible, TextView, Input, InputState, Popup } from "gpui-base";
 import { theme, run } from "herdr";
 import { NAME, REFRESH_EVERY } from "./store.js";
 import { readable } from "./notion.js";
-import { parseBlocks, toggleTodo, cell, replaceBlock, insertAfter, retype, continuation, editParts, nextEditable, slashQuery, commands, setType } from "./blocks.js";
+import { parseBlocks, children, toggleTodo, cell, replaceBlock, insertAfter, retype, continuation, editParts, nextEditable, slashQuery, commands, setType } from "./blocks.js";
 
 const INDENT = 18;
 
@@ -284,10 +284,12 @@ export const readMethods = {
 
   renderRead(cx) {
     const t = theme(), ro = Boolean(this.meta?.readonly);
-    const row = (block) => {
+    this.openToggles ??= new Set();
+    // `base` is set for a container's children: they are indented from the container's own edge and are never edited in place.
+    const row = (block, base = null) => {
       const id = `nn-b-${block.from}`;
-      const pad = (depth) => h_flex().flex_none().items_start().pl(depth * INDENT);
-      const editable = !ro && editParts(block) !== null;
+      const pad = (depth) => h_flex().flex_none().items_start().pl(Math.max(0, depth - (base ?? 0)) * INDENT);
+      const editable = !ro && base === null && editParts(block) !== null;
       // A text cell opens its block for editing on click; while open, the field takes its place.
       const inPlace = (view, size = 13) => this.isEditing(block) ? this.field(t, size)
         : editable ? view.id(`nn-e-${block.from}`).on_click((e, cx) => this.editBlock(block, e, cx)) : view;
@@ -333,12 +335,27 @@ export const readMethods = {
           return this.isEditing(block) ? pad(0).child(this.field(t, 13)) : inPlace(div().flex_none().h(8));
         case "heading":
           return pad(0).child(inPlace(div().flex_1().min_w(0).child(md(id, block.raw)), HEADING_SIZE[block.level]));
-        default:
-          return md(id, readable(block.raw));
+        default: {
+          const inner = children(block);
+          if (!inner) return md(id, readable(block.raw));
+          const depths = inner.blocks.filter((b) => b.depth !== undefined).map((b) => b.depth);
+          const body = v_flex().flex_1().min_w(0).gap(4).children(inner.blocks.map((b) => row(b, depths.length ? Math.min(...depths) : 0)));
+          if (block.tag === "callout") {
+            return h_flex().flex_none().items_start().gap(8).p(10).rounded(8).bg(t.raised)
+              .when(Boolean(inner.icon), (el) => el.child(div().flex_none().child(inner.icon))).child(body);
+          }
+          const open = this.openToggles.has(block.from);
+          return Collapsible.new().flex().flex_col().flex_none().open(open)
+            .child(h_flex().id(`nn-d-${block.from}`).flex_none().min_h(28).gap(6).items_center().cursor_pointer()
+              .on_click((_e, cx) => { if (open) this.openToggles.delete(block.from); else this.openToggles.add(block.from); cx.notify(); })
+              .child(div().flex_none().w(12).text_color(t.muted).child(open ? "▾" : "▸"))
+              .child(div().flex_1().min_w(0).child(md(`nn-s-${block.from}`, inner.summary ?? ""))))
+            .content(h_flex().flex_none().pl(INDENT).child(body));
+        }
       }
     };
     const blocks = this.blocks(), ed = this.editing;
-    const rows = blocks.map(row);
+    const rows = blocks.map((b) => row(b));
     // The open block no longer matches any block of the note: keep its draft on screen with the notice.
     if (ed && !blocks.some((b) => sameBlock(b, ed.block))) { ed.stale = true; rows.push(h_flex().flex_none().child(this.field(t, 13))); }
     return v_flex().id("nn-read").flex_1().min_h(0).overflow_y_scrollbar().px(14).py(10).gap(4)

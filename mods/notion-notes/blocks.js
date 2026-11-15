@@ -10,9 +10,38 @@ const todoLine = (l) => {
   return m && { done: m[2] !== " ", label: m[3], depth: depthOf(m[1]) };
 };
 
-/** The note's to-do blocks (outside fenced code and tags) as `{ line, done, label, depth }`. */
+// Containers whose children the read view draws; any other tag stays opaque.
+const CONTAINERS = new Set(["callout", "details"]);
+
+/**
+ * The inside of a callout or toggle block as `{ icon, summary, blocks }`: `blocks` are its body
+ * parsed again with `from`/`to` as line numbers of the full text, `summary` is a toggle's
+ * `<summary>` line and `icon` the callout's attribute (both null if absent). Null for any other
+ * block, and for one whose opening or closing tag shares a line with text, which is drawn whole.
+ */
+export function children(block) {
+  const tag = block?.type === "raw" && block.tag;
+  if (!CONTAINERS.has(tag)) return null;
+  const lines = block.raw.split("\n");
+  const open = lines.findIndex((l) => l.includes(">")), last = lines.length - 1;
+  if (open < 0 || open === last || lines[open].slice(lines[open].indexOf(">") + 1).trim() || lines[open].trimEnd().endsWith("/>")) return null;
+  const closed = new RegExp(`^\\s*</${tag}>\\s*$`).test(lines[last]);
+  if (!closed && lines[last].includes(`</${tag}`)) return null;
+  const inner = lines.slice(open + 1, closed ? last : lines.length);
+  const k = inner.findIndex((l) => l.trim()), sum = /^\s*<summary>(.*)<\/summary>\s*$/.exec(inner[k] ?? "");
+  const skip = sum ? k + 1 : 0, shift = block.from + open + 1 + skip;
+  return {
+    icon: /(?:^|\s)icon="([^"]*)"/.exec(lines.slice(0, open + 1).join(" "))?.[1] ?? null,
+    summary: sum ? sum[1] : null,
+    blocks: parseBlocks(inner.slice(skip).join("\n")).map((b) => ({ ...b, from: b.from + shift, to: b.to + shift })),
+  };
+}
+
+const walk = (blocks) => blocks.flatMap((b) => (b.type === "todo" ? [b] : walk(children(b)?.blocks ?? [])));
+
+/** The note's to-do blocks (outside fenced code and tags other than callouts and toggles) as `{ line, done, label, depth }`. */
 export function todos(text) {
-  return parseBlocks(text).filter((b) => b.type === "todo").map((b) => ({ line: b.from, done: b.done, label: b.label, depth: b.depth }));
+  return walk(parseBlocks(text)).map((b) => ({ line: b.from, done: b.done, label: b.label, depth: b.depth }));
 }
 
 /** Flips the to-do at `line`, or returns null if that line is no longer the to-do `label`. */
