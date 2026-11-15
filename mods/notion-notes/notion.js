@@ -75,8 +75,8 @@ export function pageUrl(id, url, app) {
 export function readable(text) {
   return text
     .replace(/^[ \t]*<empty-block\/>[ \t]*$/gm, "")
-    .replace(/<page url="([^"]*)"[^>]*>([\s\S]*?)<\/page>/g, "📄 [$2]($1)\n")
-    .replace(/<database url="([^"]*)"[^>]*>([\s\S]*?)<\/database>/g, "🗃️ [$2]($1)\n");
+    .replace(/<page\s(?:[^>]*\s)?url="([^"]*)"[^>]*>([\s\S]*?)<\/page>/g, "📄 [$2]($1)\n")
+    .replace(/<database\s(?:[^>]*\s)?url="([^"]*)"[^>]*>([\s\S]*?)<\/database>/g, "🗃️ [$2]($1)\n");
 }
 
 /**

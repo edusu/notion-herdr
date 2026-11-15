@@ -7,7 +7,7 @@ import { v_flex, h_flex, Editor, EditorState } from "gpui-base";
 import { exec, theme, settings, props, run, shared, layout, readTextFile } from "herdr";
 import { client, upload, serial, refreshDecision, pageUrl, validId } from "./notion.js";
 import { pickerMethods } from "./picker.js";
-import { readMethods } from "./read.js";
+import { readMethods, sourcesChanged } from "./read.js";
 import { NAME, MAP_REV, REFRESH_EVERY, dir, mapPath, cachePath, metaPath, uploadPath, spaceKey, spacePage, readJson, put, loadSettings } from "./store.js";
 import * as fs from "fs/promises";
 
@@ -136,6 +136,7 @@ class NotionNotes extends View {
     }
     // A read-only second view takes the note over once the view that edited it is gone.
     if (this.meta?.elsewhere && !owners.has(this.page)) this.open(this.page, cx);
+    if (this.reading && this.sourcesSeen !== sourcesChanged()) { this.sourcesSeen = sourcesChanged(); cx.notify(); }
     if (this.dirty && this.editor) this.save(cx);
     if (this.canUpload(this.meta) && Date.now() - this.changedAt >= UPLOAD_AFTER) this.push(this.page, this.meta, false, cx);
   }

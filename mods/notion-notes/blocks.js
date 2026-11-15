@@ -24,14 +24,19 @@ export function toggleTodo(text, line, label) {
   return lines.join("\n");
 }
 
-const attr = (attrs, name) => new RegExp(`(?:^|\\s)${name}="([^"]*)"`).exec(attrs)?.[1];
+const URL_ATTR = /(?:^|\s)url="([^"]*)"/;
+const SOURCE_ATTR = /(?:^|\s)data-source-url="collection:\/\/([^"]*)"/;
+const LINKS = Object.fromEntries(["page", "database"].map((n) => [n, new RegExp(`^<${n}\\s([^>]*)>((?:(?!</${n}>).)*)</${n}>$`)]));
+// A page id, dashed or not, not part of a longer hex run.
+const PAGE_ID = /(?<![0-9a-f])[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}(?![0-9a-f])/gi;
 
-// A line that is exactly `<name url="…" …>Title</name>`, or null.
+// A line that is exactly `<name url="…" …>Title</name>`, or null. The id is the last one in
+// the URL's path: a query such as `?v=<view id>` names a view, not the page.
 function link(t, name) {
-  const m = new RegExp(`^<${name}\\s([^>]*)>((?:(?!</${name}>).)*)</${name}>$`).exec(t);
-  const url = m ? attr(m[1], "url") : undefined;
-  if (url === undefined) return null;
-  const hex = [...url.matchAll(/[0-9a-f]{32}/gi)].at(-1)?.[0];
+  const m = LINKS[name].exec(t);
+  const url = m && URL_ATTR.exec(m[1])?.[1];
+  if (url == null) return null;
+  const hex = [...url.split(/[?#]/)[0].matchAll(PAGE_ID)].at(-1)?.[0];
   return { attrs: m[1], url, title: m[2], id: canonicalId(hex) };
 }
 
@@ -39,16 +44,28 @@ function link(t, name) {
 const VOID = new Set(["br", "hr", "img", "input", "wbr"]);
 
 // Last line of the element opened on line `i`: open and close tags of the same name are
-// counted, so a nested `<details>` does not end the outer one early. An unclosed one runs to the end.
+// counted, so a nested `<details>` does not end the outer one early. Tags inside fenced code
+// are text, and an opening tag may end (or self-close) on a later line. An unclosed one runs to the end.
 function tagEnd(lines, i, tag) {
   const re = new RegExp(`<(/?)${tag}(?=[\\s/>]|$)([^>]*)(>|$)`, "g");
-  let depth = 0;
+  let depth = 0, open = false, fence = false;
   for (let end = i; end < lines.length; end++) {
-    for (const [, close, rest, gt] of lines[end].matchAll(re)) {
-      if (close) depth--;
-      else if (!(gt && rest.endsWith("/"))) depth++;
+    let l = lines[end];
+    if (end > i && /^\s*(```|~~~)/.test(l)) { fence = !fence; continue; }
+    if (fence) continue;
+    if (open) {
+      const gt = l.indexOf(">");
+      if (gt < 0) continue;
+      open = false;
+      if (l[gt - 1] === "/") depth--;
+      l = l.slice(gt + 1);
     }
-    if (depth <= 0) return end;
+    for (const [, close, rest, gt] of l.matchAll(re)) {
+      if (close) depth--;
+      else if (!gt) { depth++; open = true; }
+      else if (!rest.endsWith("/")) depth++;
+    }
+    if (depth <= 0 && !open) return end;
   }
   return lines.length - 1;
 }
@@ -65,13 +82,18 @@ function block(lines, i) {
   if (t === "<empty-block/>") return ["empty", i, {}];
   if ((m = link(t, "page"))) return ["page", i, { url: m.url, title: m.title, id: m.id }];
   if ((m = link(t, "database"))) {
-    const source = attr(m.attrs, "data-source-url")?.replace(/^collection:\/\//, "");
-    return ["database", i, { url: m.url, title: m.title, id: m.id, source: canonicalId(source) }];
+    return ["database", i, { url: m.url, title: m.title, id: m.id, source: canonicalId(SOURCE_ATTR.exec(m.attrs)?.[1]) }];
   }
   if ((m = /^<([A-Za-z][A-Za-z0-9-]*)(?=[\s/>]|$)/.exec(t))) {
     return ["raw", VOID.has(m[1]) ? i : tagEnd(lines, i, m[1]), { tag: m[1] }];
   }
   if (/^(---|\*\*\*|___)$/.test(t)) return ["divider", i, {}];
+  // A markdown table spans lines, so its rows stay one block.
+  if (t.startsWith("|")) {
+    let end = i;
+    while (end + 1 < lines.length && lines[end + 1].trim().startsWith("|")) end++;
+    return ["table", end, {}];
+  }
   if ((m = /^(#{1,3}) (.*)$/.exec(l))) return ["heading", i, { level: m[1].length, text: m[2] }];
   if ((m = todoLine(l))) return ["todo", i, m];
   if ((m = /^(\s*)[-*+] (.*)$/.exec(l))) return ["bullet", i, { depth: depthOf(m[1]), text: m[2] }];

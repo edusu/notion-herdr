@@ -15,6 +15,10 @@ const TAG_COLORS = { red: "ansi1", green: "ansi2", yellow: "ansi3", blue: "ansi4
 // Data source id → { at, busy, data, error }, shared by every view. `at` is set when a read
 // starts, so a failed read waits out the same throttle as a good one.
 const sources = new Map();
+// Bumped when any read ends: every view showing that data source redraws on its next tick, not
+// only the one that started the read.
+let sourcesRev = 0;
+export const sourcesChanged = () => sourcesRev;
 
 // One TextView per block keeps bold, code and links working. Ids are the block's first line,
 // which stays unique and stable while a to-do is toggled.
@@ -64,6 +68,7 @@ export const readMethods = {
           e.error = err.message;
         } finally {
           e.busy = false;
+          sourcesRev++;
           cx.notify();
         }
       });

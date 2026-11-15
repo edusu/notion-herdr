@@ -332,3 +332,22 @@ test("cell shows a dash for unsupported or malformed properties and never throws
     assert.deepEqual(cell(bad), { text: "—" });
   }
 });
+
+test("block links take the page id from the URL path, dashed or not", () => {
+  const hex = "0e5e82c3128782a4a3c807e20e40ff02", dashed = "0e5e82c3-1287-82a4-a3c8-07e20e40ff02";
+  const [db] = parseBlocks(`<database url="https://www.notion.so/${hex}?v=${"b".repeat(32)}" data-source-url="collection://${dashed}">DB</database>`);
+  assert.equal(db.id, dashed);
+  assert.equal(parseBlocks(`<page url="https://www.notion.so/${dashed}">P</page>`)[0].id, dashed);
+  assert.equal(parseBlocks(`<page url="https://www.notion.so/Cafe-${hex}">P</page>`)[0].id, dashed);
+});
+
+test("a tag closes across lines and ignores tags inside fenced code; table rows stay one block", () => {
+  const types = (text) => parseBlocks(text).map((b) => [b.type, b.from, b.to]);
+  assert.deepEqual(types('<video\n src="x"\n/>\n- [ ] t'), [["raw", 0, 2], ["todo", 3, 3]]);
+  assert.deepEqual(types("<details>\n```\n</details>\n```\n</details>\nafter"), [["raw", 0, 4], ["paragraph", 5, 5]]);
+  assert.deepEqual(types("| a | b |\n|---|---|\n| 1 | 2 |\nnext"), [["table", 0, 2], ["paragraph", 3, 3]]);
+});
+
+test("readable() finds the url attribute in any position", () => {
+  assert.equal(readable('<page color="gray" url="u">T</page>'), "📄 [T](u)\n");
+});
