@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { client, upload, serial, titleOf, refreshDecision, pages, ago, pageUrl, readable, mappedPage, sourceNames, canonicalId } from "../mods/notion-notes/notion.js";
-import { parseBlocks, todos, toggleTodo, cell, replaceBlock, insertAfter, retype, continuation, slashQuery, editParts, nextEditable } from "../mods/notion-notes/blocks.js";
+import { parseBlocks, todos, toggleTodo, cell, replaceBlock, insertAfter, retype, continuation, slashQuery, commands, setType, editParts, nextEditable } from "../mods/notion-notes/blocks.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ntn = join(here, "fake-ntn.mjs");
@@ -458,6 +458,36 @@ test("slashQuery gives null for a slash inside a word, a space, a paste or any o
   assert.equal(slashQuery("hello world", "hello /"), null);
   assert.equal(slashQuery(undefined, "/"), null);
   assert.equal(replaceBlock(undefined, { from: 0, to: 0, raw: "" }, "x"), null);
+});
+
+test("commands filters by prefix of any keyword, in English or Spanish, ignoring case and accents", () => {
+  const ids = (q) => commands(q).map((c) => c.id);
+  assert.deepEqual(ids(""), ["paragraph", "h1", "h2", "h3", "todo", "bullet", "numbered", "quote"]);
+  assert.deepEqual(commands("")[1], { id: "h1", label: "Heading 1" });
+  assert.deepEqual(ids("h"), ["h1", "h2", "h3", "divider"]);
+  assert.deepEqual(ids("h2"), ["h2"]);
+  assert.deepEqual(ids("tit"), ["h1", "h2", "h3"]);
+  assert.deepEqual(ids("títu"), ["h1", "h2", "h3"]);
+  assert.deepEqual(ids("TITULO"), ["h1", "h2", "h3"]);
+  assert.deepEqual(ids("tarea"), ["todo"]);
+  assert.deepEqual(ids("todo"), ["todo"]);
+  assert.deepEqual(ids("lis"), ["bullet", "numbered"]);
+  assert.deepEqual(ids("num"), ["numbered"]);
+  assert.deepEqual(ids("q"), ["quote"]);
+  assert.deepEqual(ids("sep"), ["divider"]);
+  assert.deepEqual(ids("hr"), ["divider"]);
+  assert.deepEqual(ids("Text"), ["paragraph"]);
+  assert.deepEqual(ids("xyz"), []);
+  assert.deepEqual(ids("headings"), []);
+});
+
+test("setType retypes a line, and gives a blank line the new marker", () => {
+  assert.equal(setType("foo", "h2"), "## foo");
+  assert.equal(setType("- [x] foo", "bullet"), "- foo");
+  assert.equal(setType("- ", "quote"), "> ");
+  assert.equal(setType("", "todo"), "- [ ] ");
+  assert.equal(setType("  ", "numbered"), "1. ");
+  assert.equal(setType("", "paragraph"), "");
 });
 
 test("editParts splits an editable one-line block into its markdown prefix and its text", () => {

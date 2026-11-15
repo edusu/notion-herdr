@@ -227,6 +227,32 @@ export function slashQuery(prev, next) {
   return m && { start: pos - m[1].length - 1, query: m[1] };
 }
 
+/** `retype`, also for a blank line (which `retype` leaves alone): it becomes the type's bare marker. */
+export function setType(raw, type) {
+  return raw.trim() === "" && Object.hasOwn(PREFIX, type) ? PREFIX[type] : retype(raw, type);
+}
+
+// In menu order. `id` is a `retype` type, or "divider"; keywords are matched by prefix.
+const COMMANDS = [
+  ["paragraph", "Text", "text texto paragraph parrafo"],
+  ["h1", "Heading 1", "h1 heading title titulo"],
+  ["h2", "Heading 2", "h2 heading title titulo"],
+  ["h3", "Heading 3", "h3 heading title titulo"],
+  ["todo", "To-do", "todo to-do task tarea checkbox"],
+  ["bullet", "Bulleted list", "bullet bulleted list lista"],
+  ["numbered", "Numbered list", "number numbered list lista numerada"],
+  ["quote", "Quote", "quote cita"],
+  ["divider", "Divider", "divider hr separator separador line"],
+].map(([id, label, words]) => ({ id, label, words: words.split(" ") }));
+const MENU_ROWS = 8;
+const fold = (s) => s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+
+/** The `/` menu commands matching `query` as `{ id, label }`, at most 8, in menu order. */
+export function commands(query) {
+  const q = fold(query);
+  return COMMANDS.filter((c) => c.words.some((w) => w.startsWith(q))).slice(0, MENU_ROWS).map(({ id, label }) => ({ id, label }));
+}
+
 const join = (rich) => rich.map((t) => t.plain_text).join("");
 
 /**

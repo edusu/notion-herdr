@@ -1,11 +1,11 @@
 // The read view: the note drawn block by block from parseBlocks. It only changes text through
 // toggleTodo and the open block's write-back on the editor, so uploads still send the editor's text and never one rebuilt from blocks.
 import { div } from "gpui-kit";
-import { v_flex, h_flex, Checkbox, TextView, Input, InputState } from "gpui-base";
+import { v_flex, h_flex, Checkbox, TextView, Input, InputState, Popup } from "gpui-base";
 import { theme, run } from "herdr";
 import { NAME, REFRESH_EVERY } from "./store.js";
 import { readable } from "./notion.js";
-import { parseBlocks, toggleTodo, cell, replaceBlock, insertAfter, retype, continuation, editParts, nextEditable } from "./blocks.js";
+import { parseBlocks, toggleTodo, cell, replaceBlock, insertAfter, retype, continuation, editParts, nextEditable, slashQuery, commands, setType } from "./blocks.js";
 
 const INDENT = 18;
 
@@ -55,9 +55,23 @@ export const readMethods = {
     const state = InputState.new({ value: parts.text });
     // Only the open block reacts: a state that was just closed may still deliver its blur.
     state.on("blur", (_e, cx) => { if (this.editing?.state === state) this.endEdit(cx); });
-    state.on("submit", (_e, cx) => { if (this.editing?.state === state) { this.enter(cx); cx.notify(); } });
+    // Enter reaches submit after the wrapper's key handler, so an open menu is settled here.
+    state.on("submit", (_e, cx) => {
+      if (this.editing?.state !== state) return;
+      const pick = this.menu()[this.editing.slash?.at];
+      if (pick) this.command(pick.id, cx); else this.enter(cx);
+      cx.notify();
+    });
+    state.on("change", (_e, cx) => {
+      const ed = this.editing;
+      if (ed?.state !== state) return;
+      const value = state.value(), hit = slashQuery(ed.last, value);
+      ed.last = value;
+      ed.slash = hit && { ...hit, at: 0 };
+      cx.notify();
+    });
     this.fieldFocus ??= cx.focus_handle();
-    this.editing = { block, state, ...parts, stale: false };
+    this.editing = { block, state, ...parts, stale: false, last: parts.text, slash: null };
     state.focus();
     if (atEnd) state.set_selected_range({ start: parts.text.length, end: parts.text.length });
   },
@@ -122,6 +136,28 @@ export const readMethods = {
     if (this.write(raw)) this.openAt(line, cx);
   },
 
+  // The commands shown under the open field; none while the block is stale.
+  menu() {
+    const ed = this.editing;
+    return ed?.slash && !ed.stale ? commands(ed.slash.query) : [];
+  },
+
+  // Removes the typed `/query`, closes the menu and turns the block into `id`, or puts a divider below it.
+  command(id, cx) {
+    const { block, state, prefix, slash } = this.editing;
+    const end = slash.start + 1 + slash.query.length, value = state.value();
+    const clean = value.slice(0, slash.start) + value.slice(end);
+    state.set_selected_range({ start: slash.start, end });
+    state.replace("");
+    // Not known whether replace() honours the range; the computed text is the fallback.
+    if (state.value() !== clean) state.set_value(clean);
+    this.editing.slash = null;
+    const text = clean.replace(/\r?\n/g, " ");
+    if (id !== "divider") return this.swap(setType(prefix + text, id), cx);
+    // write("---\n") leaves an empty line below the divider; that line is the one that opens.
+    if (this.write(text === "" ? "---\n" : `${prefix + text}\n---\n`)) this.openAt(block.from + (text === "" ? 1 : 2), cx);
+  },
+
   enter(cx) {
     const { block, state, prefix } = this.editing;
     if (!state.value() && LISTS.has(block.type)) return this.swap(retype(prefix, "paragraph"), cx);
@@ -148,10 +184,11 @@ export const readMethods = {
 
   fieldKey(e, cx) {
     // Enter is left to the field's submit event. Backspace only arrives here when the field is empty.
+    const n = this.menu().length, slash = this.editing.slash;
     switch (e.keystroke) {
-      case "escape": this.endEdit(cx); return;
-      case "up": this.move(-1, cx); break;
-      case "down": this.move(1, cx); break;
+      case "escape": if (n) this.editing.slash = null; else { this.endEdit(cx); return; } break;
+      case "up": if (n) slash.at = (slash.at + n - 1) % n; else this.move(-1, cx); break;
+      case "down": if (n) slash.at = (slash.at + 1) % n; else this.move(1, cx); break;
       case "backspace": this.backspace(cx); break;
       default: return;
     }
@@ -166,10 +203,15 @@ export const readMethods = {
   },
 
   field(t, size) {
-    const ed = this.editing;
+    const ed = this.editing, items = this.menu();
     return v_flex().flex_1().min_w(0).gap(2)
-      .child(h_flex().id("nn-field").track_focus(this.fieldFocus).on_key_down((e, cx) => this.fieldKey(e, cx))
-        .child(Input.new(ed.state).flex_1().text_size(size).text_color(t.foreground)))
+      .child(Popup.new("nn-slash", h_flex().id("nn-field").track_focus(this.fieldFocus).on_key_down((e, cx) => this.fieldKey(e, cx))
+        .child(Input.new(ed.state).flex_1().text_size(size).text_color(t.foreground))).anchor("bottom_left")
+        .when(items.length > 0, (el) => el.content(v_flex().id("nn-menu").w(220).p(4).gap(1).rounded(8).border_1().border_color(t.border).bg(t.popover)
+          .children(items.map((c, i) => h_flex().id(`nn-cmd-${c.id}`).h(26).px(8).items_center().rounded(4).cursor_pointer()
+            .text_size(12).text_color(t.foreground)
+            .when(i === ed.slash.at, (r) => r.bg(t.hover)).hover((s) => s.bg(t.hover))
+            .on_click((_e, cx) => { this.command(c.id, cx); cx.notify(); }).child(c.label))))))
       .when(ed.stale, (el) => el.child(h_flex().gap(8).items_center().text_size(11).text_color(t.blocked)
         .child(div().flex_1().min_w(0).child("This block changed in Notion; copy your text or discard it"))
         .child(h_flex().id("nn-discard").h(22).px(8).items_center().flex_none().rounded(6).border_1().border_color(t.input)
