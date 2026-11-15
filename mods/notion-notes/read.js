@@ -1,11 +1,11 @@
 // The read view: the note drawn block by block from parseBlocks. It only changes text through
-// toggleTodo on the editor, so uploads still send the editor's text and never one rebuilt from blocks.
+// toggleTodo and the open block's write-back on the editor, so uploads still send the editor's text and never one rebuilt from blocks.
 import { div } from "gpui-kit";
-import { v_flex, h_flex, Checkbox, TextView } from "gpui-base";
+import { v_flex, h_flex, Checkbox, TextView, Input, InputState } from "gpui-base";
 import { theme, run } from "herdr";
 import { NAME, REFRESH_EVERY } from "./store.js";
 import { readable } from "./notion.js";
-import { parseBlocks, toggleTodo, cell } from "./blocks.js";
+import { parseBlocks, toggleTodo, cell, replaceBlock, insertAfter, retype, continuation, editParts, nextEditable } from "./blocks.js";
 
 const INDENT = 18;
 
@@ -24,6 +24,12 @@ export const sourcesChanged = () => sourcesRev;
 // which stays unique and stable while a to-do is toggled.
 const md = (id, source) => TextView.markdown(id, source).selectable(true);
 
+const HEADING_SIZE = [0, 22, 18, 15];
+const LISTS = new Set(["bullet", "numbered", "todo"]);
+// Enter and Backspace on an empty field of these types turn it into a paragraph first.
+const LEAVES_TYPE = new Set([...LISTS, "heading", "quote"]);
+const sameBlock = (a, b) => a.from === b.from && a.raw === b.raw;
+
 export const readMethods = {
   toggleBlock(block, cx) {
     if (this.editor && !this.meta.readonly) {
@@ -36,6 +42,139 @@ export const readMethods = {
       }
     }
     cx.notify();
+  },
+
+  isEditing(block) {
+    return Boolean(this.editing) && sameBlock(this.editing.block, block);
+  },
+
+  // Opens `block` in a field that holds only its text. The caller has closed the previous block.
+  startEdit(block, cx, atEnd = false) {
+    const parts = editParts(block);
+    if (!parts || this.meta.readonly) return;
+    const state = InputState.new({ value: parts.text });
+    // Only the open block reacts: a state that was just closed may still deliver its blur.
+    state.on("blur", (_e, cx) => { if (this.editing?.state === state) this.endEdit(cx); });
+    state.on("submit", (_e, cx) => { if (this.editing?.state === state) { this.enter(cx); cx.notify(); } });
+    this.fieldFocus ??= cx.focus_handle();
+    this.editing = { block, state, ...parts, stale: false };
+    state.focus();
+    if (atEnd) state.set_selected_range({ start: parts.text.length, end: parts.text.length });
+  },
+
+  closeEdit(cx) {
+    const ed = this.editing;
+    if (!ed) return;
+    this.editing = null;
+    // Released late because this can run inside the state's own submit or blur event.
+    if (cx) cx.timer.after(300, () => ed.state.release());
+    else ed.state.release();
+  },
+
+  // The raw line the open field stands for; a single line, and the block's own raw when untouched.
+  draft() {
+    const { block, state, prefix, text } = this.editing;
+    const value = state.value().replace(/\r?\n/g, " ");
+    return value === text ? block.raw : prefix + value;
+  },
+
+  // Puts the note's new text into the editor. A null `next` means the open block is stale:
+  // the field is flagged and false is returned.
+  apply(next) {
+    this.editing.stale = next === null;
+    if (this.editing.stale) return false;
+    this.editor.set_value(next);
+    this.edited(this.meta);
+    return true;
+  },
+
+  // Replaces the open block's lines by `raw`, where "" leaves an empty line (replaceBlock alone would remove them).
+  write(raw) {
+    const text = this.editor.value(), { block } = this.editing;
+    return this.apply(raw === "" ? replaceBlock(insertAfter(text, block, ""), block, "") : replaceBlock(text, block, raw));
+  },
+
+  commit() {
+    const raw = this.draft();
+    return raw === this.editing.block.raw || this.write(raw);
+  },
+
+  // Saves and closes the open block. A stale one stays open with its draft unless `force`d
+  // (the page or view is going away). True when nothing is left open.
+  endEdit(cx, force = false) {
+    if (!this.editing) return true;
+    const ok = this.commit();
+    if (ok || force) this.closeEdit(cx);
+    cx?.notify();
+    return ok || force;
+  },
+
+  // Closes the open block and opens the one that starts at `line` of the current text, if editable.
+  openAt(line, cx, atEnd = false) {
+    this.closeEdit(cx);
+    const block = this.blocks().find((b) => b.from === line);
+    if (block) this.startEdit(block, cx, atEnd);
+  },
+
+  // Replaces the open block by `raw` and keeps editing the block that takes its place.
+  swap(raw, cx) {
+    const line = this.editing.block.from;
+    if (this.write(raw)) this.openAt(line, cx);
+  },
+
+  enter(cx) {
+    const { block, state, prefix } = this.editing;
+    if (!state.value() && LISTS.has(block.type)) return this.swap(retype(prefix, "paragraph"), cx);
+    if (!this.commit()) return;
+    const cur = this.blocks().find((b) => b.from === block.from);
+    if (this.apply(insertAfter(this.editor.value(), cur, continuation(cur)))) this.openAt(cur.to + 1, cx);
+  },
+
+  backspace(cx) {
+    const { block, state, prefix } = this.editing;
+    if (state.value()) return;
+    if (LEAVES_TYPE.has(block.type)) return this.swap(retype(prefix, "paragraph"), cx);
+    const prev = nextEditable(this.blocks(), block.from, -1);
+    if (!this.apply(replaceBlock(this.editor.value(), block, ""))) return;
+    // Blocks above the deleted lines keep their line numbers.
+    if (prev) this.openAt(prev.from, cx, true);
+    else this.closeEdit(cx);
+  },
+
+  move(step, cx) {
+    const target = nextEditable(this.blocks(), this.editing.block.from, step);
+    if (target && this.commit()) this.openAt(target.from, cx, true);
+  },
+
+  fieldKey(e, cx) {
+    // Enter is left to the field's submit event. Backspace only arrives here when the field is empty.
+    switch (e.keystroke) {
+      case "escape": this.endEdit(cx); return;
+      case "up": this.move(-1, cx); break;
+      case "down": this.move(1, cx); break;
+      case "backspace": this.backspace(cx); break;
+      default: return;
+    }
+    cx.notify();
+  },
+
+  // A click on block B runs before the blur of the open block A, so A is saved here first.
+  editBlock(block, e, cx) {
+    if (e.modifiers?.platform || this.meta.readonly || !this.endEdit(cx)) return;
+    this.startEdit(block, cx);
+    cx.notify();
+  },
+
+  field(t, size) {
+    const ed = this.editing;
+    return v_flex().flex_1().min_w(0).gap(2)
+      .child(h_flex().id("nn-field").track_focus(this.fieldFocus).on_key_down((e, cx) => this.fieldKey(e, cx))
+        .child(Input.new(ed.state).flex_1().text_size(size).text_color(t.foreground)))
+      .when(ed.stale, (el) => el.child(h_flex().gap(8).items_center().text_size(11).text_color(t.blocked)
+        .child(div().flex_1().min_w(0).child("This block changed in Notion; copy your text or discard it"))
+        .child(h_flex().id("nn-discard").h(22).px(8).items_center().flex_none().rounded(6).border_1().border_color(t.input)
+          .bg(t.raised).text_color(t.foreground).cursor_pointer().hover((s) => s.opacity(0.88))
+          .on_click((_e, cx) => { this.closeEdit(cx); cx.notify(); }).child("Discard"))));
   },
 
   // A page opens in a pane to the right, ⌘-click opens it in Notion.
@@ -102,6 +241,10 @@ export const readMethods = {
     const row = (block) => {
       const id = `nn-b-${block.from}`;
       const pad = (depth) => h_flex().flex_none().items_start().pl(depth * INDENT);
+      const editable = !ro && editParts(block) !== null;
+      // A text cell opens its block for editing on click; while open, the field takes its place.
+      const inPlace = (view, size = 13) => this.isEditing(block) ? this.field(t, size)
+        : editable ? view.id(`nn-e-${block.from}`).on_click((e, cx) => this.editBlock(block, e, cx)) : view;
       switch (block.type) {
         case "todo": {
           const on = block.done;
@@ -111,18 +254,18 @@ export const readMethods = {
               .border_1().border_color(on ? t.accent : t.border).bg(on ? t.accent : t.background)
               .when(!ro, (el) => el.cursor_pointer())
               .when(on, (el) => el.child(div().text_size(11).text_color(t.accent_foreground).child("✓"))))
-            .when(Boolean(block.label), (el) => el.child(div().flex_1().min_w(0).text_color(on ? t.dim : t.foreground)
-              .child(md(id, on ? `~~${block.label}~~` : block.label))));
+            .when(Boolean(block.label) || editable, (el) => el.child(inPlace(div().flex_1().min_w(0).min_h(20).text_color(on ? t.dim : t.foreground)
+              .when(Boolean(block.label), (d) => d.child(md(id, on ? `~~${block.label}~~` : block.label))))));
         }
         case "bullet":
         case "numbered":
           return pad(block.depth).gap(6)
             .child(div().flex_none().text_color(t.muted).child(block.type === "bullet" ? "•" : block.marker))
-            .child(div().flex_1().min_w(0).child(md(id, block.text)));
+            .child(inPlace(div().flex_1().min_w(0).min_h(20).child(md(id, block.text))));
         case "paragraph":
-          return pad(block.depth).child(div().flex_1().min_w(0).child(md(id, block.text)));
+          return pad(block.depth).child(inPlace(div().flex_1().min_w(0).child(md(id, block.text))));
         case "quote":
-          return div().flex_none().border_l(2).border_color(t.border).pl(10).text_color(t.muted).child(md(id, block.text));
+          return div().flex_none().border_l(2).border_color(t.border).pl(10).text_color(t.muted).child(inPlace(div().min_w(0).child(md(id, block.text))));
         case "code":
           return div().flex_none().rounded(6).bg(t.raised).p(8).child(md(id, block.raw));
         case "divider":
@@ -140,15 +283,19 @@ export const readMethods = {
         }
         case "empty":
         case "blank":
-          return div().flex_none().h(8);
+          return this.isEditing(block) ? pad(0).child(this.field(t, 13)) : inPlace(div().flex_none().h(8));
         case "heading":
-          return md(id, block.raw);
+          return pad(0).child(inPlace(div().flex_1().min_w(0).child(md(id, block.raw)), HEADING_SIZE[block.level]));
         default:
           return md(id, readable(block.raw));
       }
     };
+    const blocks = this.blocks(), ed = this.editing;
+    const rows = blocks.map(row);
+    // The open block no longer matches any block of the note: keep its draft on screen with the notice.
+    if (ed && !blocks.some((b) => sameBlock(b, ed.block))) { ed.stale = true; rows.push(h_flex().flex_none().child(this.field(t, 13))); }
     return v_flex().id("nn-read").flex_1().min_h(0).overflow_y_scrollbar().px(14).py(10).gap(4)
-      .children(this.blocks().map(row));
+      .children(rows);
   },
 
   // Renders happen far more often than edits, so the parse is kept until the text changes.

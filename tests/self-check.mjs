@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { client, upload, serial, titleOf, refreshDecision, pages, ago, pageUrl, readable, mappedPage, sourceNames, canonicalId } from "../mods/notion-notes/notion.js";
-import { parseBlocks, todos, toggleTodo, cell, replaceBlock, insertAfter, retype, continuation, slashQuery } from "../mods/notion-notes/blocks.js";
+import { parseBlocks, todos, toggleTodo, cell, replaceBlock, insertAfter, retype, continuation, slashQuery, editParts, nextEditable } from "../mods/notion-notes/blocks.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ntn = join(here, "fake-ntn.mjs");
@@ -458,4 +458,50 @@ test("slashQuery gives null for a slash inside a word, a space, a paste or any o
   assert.equal(slashQuery("hello world", "hello /"), null);
   assert.equal(slashQuery(undefined, "/"), null);
   assert.equal(replaceBlock(undefined, { from: 0, to: 0, raw: "" }, "x"), null);
+});
+
+test("editParts splits an editable one-line block into its markdown prefix and its text", () => {
+  const parts = (raw) => editParts(parseBlocks(raw)[0]);
+  assert.deepEqual(parts("plain text"), { prefix: "", text: "plain text" });
+  assert.deepEqual(parts("  indented"), { prefix: "  ", text: "indented" });
+  assert.deepEqual(parts("## Title"), { prefix: "## ", text: "Title" });
+  assert.deepEqual(parts("- item"), { prefix: "- ", text: "item" });
+  assert.deepEqual(parts("\t* nested"), { prefix: "\t* ", text: "nested" });
+  assert.deepEqual(parts("12) step"), { prefix: "12) ", text: "step" });
+  assert.deepEqual(parts("- [x] done"), { prefix: "- [x] ", text: "done" });
+  assert.deepEqual(parts("  - [ ] open"), { prefix: "  - [ ] ", text: "open" });
+  assert.deepEqual(parts("> quoted"), { prefix: "> ", text: "quoted" });
+  assert.deepEqual(parts("- "), { prefix: "- ", text: "" });
+  assert.deepEqual(parts("- [ ] "), { prefix: "- [ ] ", text: "" });
+  assert.deepEqual(parts("-  two spaces "), { prefix: "- ", text: " two spaces " });
+});
+
+test("editParts gives blank and empty blocks an empty prefix, so typing replaces the whole line", () => {
+  for (const raw of ["", "   ", "<empty-block/>"]) assert.deepEqual(editParts(parseBlocks("a\n" + raw)[1]), { prefix: "", text: "" }, JSON.stringify(raw));
+});
+
+test("editParts gives null for blocks that are not edited in place", () => {
+  for (const raw of ["> a\n> b", "```\ncode\n```", "| a |\n| - |", "---", "<callout>\nx\n</callout>", '<page url="https://notion.so/418e82c3128781d494b3fc5ad78fc192">T</page>']) {
+    assert.equal(editParts(parseBlocks(raw)[0]), null, raw);
+  }
+  assert.equal(editParts(undefined), null);
+});
+
+test("editParts prefix plus text is always the block's raw line", () => {
+  const text = "# T\n- a\n  1. b\n- [ ] c\n> q\nplain\n\n   indented";
+  for (const b of parseBlocks(text)) {
+    const e = editParts(b);
+    if (e && b.type !== "blank") assert.equal(e.prefix + e.text, b.raw);
+  }
+});
+
+test("nextEditable finds the closest editable block before or after a line", () => {
+  const blocks = parseBlocks("# T\n```\nx\n```\ntext\n---\n| a |\n- last");
+  const at = (b) => b?.from;
+  assert.equal(at(nextEditable(blocks, 4, -1)), 0);
+  assert.equal(at(nextEditable(blocks, 4, 1)), 7);
+  assert.equal(nextEditable(blocks, 0, -1), undefined);
+  assert.equal(nextEditable(blocks, 7, 1), undefined);
+  assert.equal(at(nextEditable(blocks, 1, 1)), 4);
+  assert.equal(nextEditable([], 0, 1), undefined);
 });

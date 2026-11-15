@@ -210,6 +210,7 @@ class NotionNotes extends View {
 
   // Leaving a note saves it and starts its upload.
   leave(cx) {
+    this.endEdit(cx, true);
     if (!this.meta) return;
     if (this.dirty && this.editor) this.save(cx);
     if (this.canUpload(this.meta)) this.push(this.page, this.meta, false, cx);
@@ -231,7 +232,7 @@ class NotionNotes extends View {
   // and its conflict check handle those). A failure keeps the text and only shows the error.
   refresh(cx) {
     const id = this.page, m = this.meta;
-    if (!m || m.elsewhere || m.pending || m.uploading || this.dirty || this.conflict) return;
+    if (!m || m.elsewhere || m.pending || m.uploading || this.dirty || this.conflict || this.editing) return;
     const started = Date.now();
     if (started - (fetchedAt.get(id) ?? 0) < REFRESH_EVERY) return;
     fetchedAt.set(id, started);
@@ -245,7 +246,8 @@ class NotionNotes extends View {
           Object.assign(m, { url: p.url, title: p.title });
           await this.disk(() => putMeta(id, m));
         }
-        if (decision !== "apply") return;
+        // A block opened while the read was in flight: its text stays for the next refresh.
+        if (decision !== "apply" || this.editing) return;
         Object.assign(m, fromPage(p));
         m.readonly = m.partial;
         this.editor.release();
@@ -262,6 +264,7 @@ class NotionNotes extends View {
   }
 
   open(id, cx, fresh = false) {
+    this.endEdit(cx, true);
     this.release();
     this.editor?.release();
     this.editor = null; this.page = id; this.meta = null; this.conflict = null; this.dirty = false;
@@ -313,6 +316,7 @@ class NotionNotes extends View {
   }
 
   toggleView(cx) {
+    if (!this.endEdit(cx)) return;
     this.reading = !this.reading;
     try { localStorage.setItem("view", this.reading ? "read" : "edit"); } catch {}
     cx.notify();
@@ -324,6 +328,7 @@ class NotionNotes extends View {
   }
 
   async close() {
+    this.endEdit(undefined, true);
     this.release();
     if (!this.dirty || !this.editor || !this.meta) return;
     // An upload does not fit in close's 250 ms: keep it pending for the next start.

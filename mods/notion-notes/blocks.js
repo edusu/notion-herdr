@@ -186,6 +186,27 @@ export function continuation(block) {
   }
 }
 
+const EDITABLE = new Set(["paragraph", "heading", "bullet", "numbered", "todo", "quote"]);
+
+/**
+ * How a block is edited in place: `prefix` is the markdown that stays out of the field and
+ * `text` is what the field holds, so `prefix + text` is the raw line. A blank or empty block has
+ * an empty prefix (typing replaces the whole line). Null for anything that spans lines (a
+ * multi-line quote, code, tables), raw tags, dividers, pages and databases.
+ */
+export function editParts(block) {
+  const type = block?.type;
+  if (type === "blank" || type === "empty") return { prefix: "", text: "" };
+  if (!EDITABLE.has(type) || block.to !== block.from) return null;
+  const text = type === "todo" ? block.label : block.text;
+  return { prefix: block.raw.slice(0, block.raw.length - text.length), text };
+}
+
+/** The closest block before (`step` -1) or after (1) line `from` that `editParts` accepts, or undefined. */
+export function nextEditable(blocks, from, step) {
+  return step < 0 ? blocks.findLast((b) => b.from < from && editParts(b)) : blocks.find((b) => b.from > from && editParts(b));
+}
+
 /**
  * Where the `/word` under the cursor starts, as `{ start, query }`, given the field's value
  * before and after one change; null when the change is not one typed or deleted character, or
