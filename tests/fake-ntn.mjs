@@ -21,7 +21,9 @@ if (group === "pages" && cmd === "get") {
 } else if (group === "pages" && cmd === "edit") {
   const p = state.pages[rest[0]];
   if (!p) fail(`Could not find page with ID: ${rest[0]}`);
-  p.markdown = stripFrontmatter(readFileSync(0, "utf8")).replace(/_(\w+)_/g, "*$1*").trimEnd();
+  const body = stripFrontmatter(readFileSync(0, "utf8"));
+  if (!body.trim()) fail("Markdown content is empty after removing the frontmatter block.");
+  p.markdown = body.replace(/_(\w+)_/g, "*$1*").trimEnd();
   state.edits = (state.edits ?? 0) + 1;
   save();
   console.log(rest[0]);

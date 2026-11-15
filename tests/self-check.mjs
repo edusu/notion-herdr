@@ -181,3 +181,8 @@ test("errors become one readable line", async () => {
   await assert.rejects(api.get(ID), { message: "error: not logged in" });
   await assert.rejects(client(exec, join(tmp, "missing-ntn")).get(ID), /^Error: Cannot run /);
 });
+
+test("an emptied note uploads as Notion's empty block", async () => {
+  reset({ pages: { [ID]: { title: "t", markdown: "<empty-block/>" } } });
+  assert.deepEqual(await upload(api, ID, "  \n", "<empty-block/>", file, write), { base: "<empty-block/>" });
+});

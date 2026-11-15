@@ -179,7 +179,8 @@ export async function upload(api, id, text, base, file, write, force = false) {
   const remote = await api.get(id);
   if (remote.partial) throw new Error("Notion returned partial markdown; not uploading");
   if (!force && remote.markdown !== base) return { conflict: remote };
-  await write(file, PREFIX + text);
+  // `ntn pages edit` rejects empty markdown; this is how Notion itself writes an empty page.
+  await write(file, PREFIX + (text.trim() ? text : "<empty-block/>"));
   await api.edit(id, file);
   return { base: (await api.get(id)).markdown };
 }
