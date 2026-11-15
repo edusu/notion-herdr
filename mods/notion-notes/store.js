@@ -5,6 +5,8 @@ import { DEFAULT_NTN, mappedPage } from "./notion.js";
 import * as fs from "fs/promises";
 
 export const NAME = "notion-notes";
+/** Quick tab switching reuses the local copy and cached tables instead of starting `ntn` each time. */
+export const REFRESH_EVERY = 15000;
 /** Shared key the picker bumps after it changes map.json. */
 export const MAP_REV = "notion-notes.map";
 const DEFAULTS = { parents: [], datasource: "", ntn: DEFAULT_NTN };

@@ -3,14 +3,11 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, Checkbox, TextView } from "gpui-base";
 import { theme, run } from "herdr";
-import { NAME } from "./store.js";
+import { NAME, REFRESH_EVERY } from "./store.js";
 import { readable } from "./notion.js";
 import { parseBlocks, toggleTodo, cell } from "./blocks.js";
 
 const INDENT = 18;
-
-/** Quick tab switching reuses the local copy and cached tables instead of starting `ntn` each time. */
-export const REFRESH_EVERY = 15000;
 
 // Notion colour name → Herdr theme token; anything else is muted.
 const TAG_COLORS = { red: "ansi1", green: "ansi2", yellow: "ansi3", blue: "ansi4", purple: "ansi5", pink: "ansi13", orange: "ansi11", brown: "ansi3" };
@@ -37,18 +34,24 @@ export const readMethods = {
     cx.notify();
   },
 
-  // A page opens in a pane to the right, ⌘-click opens it in Notion; a database only in Notion.
+  // A page opens in a pane to the right, ⌘-click opens it in Notion.
+  openPage(id, url, e, cx) {
+    if (e.modifiers?.platform) this.openInNotion(cx, id, url);
+    else run("pane.split", { direction: "right", mod: NAME, props: { page: id } });
+  },
+
+  // A database opens only in Notion: pane mode reads pages.
   openBlock(block, e, cx) {
     if (!block.id) return;
-    if (block.type === "page" && !e.modifiers?.platform) run("pane.split", { direction: "right", mod: NAME, props: { page: block.id } });
+    if (block.type === "page") this.openPage(block.id, block.url, e, cx);
     else this.openInNotion(cx, block.id, block.url);
   },
 
   // The rows under a database's title: the table, "Loading…" or the read error. Draws from the
   // cache and starts a read when it is older than REFRESH_EVERY.
   renderSource(block, t, cx) {
-    const e = sources.get(block.source) ?? {};
-    sources.set(block.source, e);
+    let e = sources.get(block.source);
+    if (!e) sources.set(block.source, (e = {}));
     if (!e.busy && Date.now() - (e.at ?? 0) >= REFRESH_EVERY) {
       e.busy = true;
       e.at = Date.now();
@@ -81,7 +84,7 @@ export const readMethods = {
         .children(d.columns.map((col, c) => div().flex_1().flex_grow(c === 0 ? 2 : 1).min_w(0).truncate().child(col.name))),
       ...d.rows.map((r, i) => h_flex().id(`nn-r-${block.from}-${i}`).flex_none().min_h(26).px(6).gap(8).items_center().rounded(6)
         .cursor_pointer().hover((s) => s.bg(t.hover))
-        .on_click((ev, cx) => this.openBlock({ type: "page", id: r.id, url: r.url }, ev, cx))
+        .on_click((ev, cx) => this.openPage(r.id, r.url, ev, cx))
         .children(cells(d.columns, (col) => cell(r.properties[col.name])))),
       ...(d.more ? [h_flex().id(`nn-m-${block.from}`).flex_none().px(6).py(4).cursor_pointer().text_xs().text_color(t.muted)
         .on_click((ev, cx) => this.openBlock(block, ev, cx)).child("Showing first 50 · Open in Notion")] : []),
@@ -93,7 +96,7 @@ export const readMethods = {
     const t = theme(), ro = Boolean(this.meta?.readonly);
     const row = (block) => {
       const id = `nn-b-${block.from}`;
-      const pad = (depth) => h_flex().flex_none().items_start().pl((depth ?? 0) * INDENT);
+      const pad = (depth) => h_flex().flex_none().items_start().pl(depth * INDENT);
       switch (block.type) {
         case "todo": {
           const on = block.done;
@@ -109,7 +112,7 @@ export const readMethods = {
         case "bullet":
         case "numbered":
           return pad(block.depth).gap(6)
-            .child(div().flex_none().text_color(t.muted).child(block.type === "bullet" ? "•" : /\d+[.)]/.exec(block.raw)[0]))
+            .child(div().flex_none().text_color(t.muted).child(block.type === "bullet" ? "•" : block.marker))
             .child(div().flex_1().min_w(0).child(md(id, block.text)));
         case "paragraph":
           return pad(block.depth).child(div().flex_1().min_w(0).child(md(id, block.text)));
@@ -140,6 +143,13 @@ export const readMethods = {
       }
     };
     return v_flex().id("nn-read").flex_1().min_h(0).overflow_y_scrollbar().px(14).py(10).gap(4)
-      .children(parseBlocks(this.editor.value()).map(row));
+      .children(this.blocks().map(row));
+  },
+
+  // Renders happen far more often than edits, so the parse is kept until the text changes.
+  blocks() {
+    const text = this.editor.value();
+    if (text !== this.parsedText) { this.parsedText = text; this.parsed = parseBlocks(text); }
+    return this.parsed;
   },
 };

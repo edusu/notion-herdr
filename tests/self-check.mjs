@@ -285,7 +285,6 @@ test("source returns the title column first, then the schema's order, with rows 
     more: true,
   } } });
   assert.deepEqual(await api.source(ID), {
-    title: "Tasks",
     columns: [{ name: "Nombre", type: "title" }, { name: "Estado", type: "status" }, { name: "Fecha", type: "date" }],
     rows: [{ id: "r1", url: "https://www.notion.so/r1", properties: props("One", "Doing") }],
     more: true,

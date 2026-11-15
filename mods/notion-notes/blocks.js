@@ -10,16 +10,9 @@ const todoLine = (l) => {
   return m && { done: m[2] !== " ", label: m[3], depth: depthOf(m[1]) };
 };
 
-/** The note's `- [ ]` / `- [x]` lines outside fenced code: `{ line, done, label, depth }`. */
+/** The note's to-do blocks (outside fenced code and tags) as `{ line, done, label, depth }`. */
 export function todos(text) {
-  const out = [];
-  let fence = false;
-  text.split("\n").forEach((l, line) => {
-    if (/^\s*(```|~~~)/.test(l)) fence = !fence;
-    const t = !fence && todoLine(l);
-    if (t) out.push({ line, ...t });
-  });
-  return out;
+  return parseBlocks(text).filter((b) => b.type === "todo").map((b) => ({ line: b.from, done: b.done, label: b.label, depth: b.depth }));
 }
 
 /** Flips the to-do at `line`, or returns null if that line is no longer the to-do `label`. */
@@ -82,7 +75,7 @@ function block(lines, i) {
   if ((m = /^(#{1,3}) (.*)$/.exec(l))) return ["heading", i, { level: m[1].length, text: m[2] }];
   if ((m = todoLine(l))) return ["todo", i, m];
   if ((m = /^(\s*)[-*+] (.*)$/.exec(l))) return ["bullet", i, { depth: depthOf(m[1]), text: m[2] }];
-  if ((m = /^(\s*)\d+[.)] (.*)$/.exec(l))) return ["numbered", i, { depth: depthOf(m[1]), text: m[2] }];
+  if ((m = /^(\s*)(\d+[.)]) (.*)$/.exec(l))) return ["numbered", i, { depth: depthOf(m[1]), marker: m[2], text: m[3] }];
   if (t.startsWith(">")) {
     let end = i;
     while (end + 1 < lines.length && lines[end + 1].trimStart().startsWith(">")) end++;

@@ -7,8 +7,8 @@ import { v_flex, h_flex, Editor, EditorState } from "gpui-base";
 import { exec, theme, settings, props, run, shared, layout, readTextFile } from "herdr";
 import { client, upload, serial, refreshDecision, pageUrl, validId } from "./notion.js";
 import { pickerMethods } from "./picker.js";
-import { readMethods, REFRESH_EVERY } from "./read.js";
-import { NAME, MAP_REV, dir, mapPath, cachePath, metaPath, uploadPath, spaceKey, spacePage, readJson, put, loadSettings } from "./store.js";
+import { readMethods } from "./read.js";
+import { NAME, MAP_REV, REFRESH_EVERY, dir, mapPath, cachePath, metaPath, uploadPath, spaceKey, spacePage, readJson, put, loadSettings } from "./store.js";
 import * as fs from "fs/promises";
 
 const UPLOAD_AFTER = 3000;
