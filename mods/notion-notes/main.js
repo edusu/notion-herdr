@@ -3,12 +3,12 @@
 // pane; opened as an overlay (`mod.open`) it is the dialog that chooses or creates a note.
 // The save chain is adapted from tab-notes in ozcberkay/herdr-coban (Apache-2.0).
 import { View, div, svg } from "gpui-kit";
-import { v_flex, h_flex, Editor, EditorState } from "gpui-base";
+import { v_flex, h_flex, Editor, EditorState, Input, InputState } from "gpui-base";
 import { exec, theme, settings, props, run, shared, layout, readTextFile } from "herdr";
 import { client, upload, serial, refreshDecision, pageUrl, validId } from "./notion.js";
 import { replaceBlock, appendedPage } from "./blocks.js";
 import { pickerMethods } from "./picker.js";
-import { readMethods, sourcesChanged } from "./read.js";
+import { readMethods, sourcesChanged, release } from "./read.js";
 import { NAME, MAP_REV, REFRESH_EVERY, dir, mapPath, cachePath, metaPath, uploadPath, spaceKey, spacePage, readJson, put, loadSettings } from "./store.js";
 import * as fs from "fs/promises";
 
@@ -39,6 +39,10 @@ const fetchedAt = new Map();
 let swept = false;
 let listed = Promise.resolve();
 const sweeping = new Map();
+// Compact ids of pages renamed in this app session: a view whose note links one reads Notion again,
+// since the parent's markdown now carries the new title.
+const renamed = new Set();
+let renamedRev = 0;
 // notion:// opens the desktop app; once `open` fails for it, https is used for the session.
 let viaApp = true;
 
@@ -71,6 +75,7 @@ class NotionNotes extends View {
       else this.errors.open = "Not a Notion page id";
       return;
     }
+    this.renamedSeen = renamedRev;
     this.key = undefined; this.map = null; this.mapRev = shared(MAP_REV);
     this.loadMap(cx);
     if (!swept) { swept = true; this.sweep(cx); }
@@ -137,6 +142,11 @@ class NotionNotes extends View {
     }
     // A read-only second view takes the note over once the view that edited it is gone.
     if (this.meta?.elsewhere && !owners.has(this.page)) this.open(this.page, cx);
+    if (this.renamedSeen !== renamedRev) {
+      this.renamedSeen = renamedRev;
+      const text = this.editor?.value() ?? "";
+      if ([...renamed].some((hex) => text.includes(hex))) { fetchedAt.delete(this.page); this.refresh(cx); }
+    }
     if (this.reading && this.sourcesSeen !== sourcesChanged()) { this.sourcesSeen = sourcesChanged(); cx.notify(); }
     if (this.dirty && this.editor) this.save(cx);
     if (this.canUpload(this.meta) && Date.now() - this.changedAt >= UPLOAD_AFTER) this.push(this.page, this.meta, false, cx);
@@ -225,6 +235,60 @@ class NotionNotes extends View {
         if (this.meta === m) this.errors.page = `Cannot create page: ${e.message}${made ? " (the subpage exists in Notion)" : ""}`;
       }
       this.creating = null;
+      cx.notify();
+    });
+  }
+
+  // The page title above the note, in both views; a click edits it unless the note is read-only.
+  renderTitle(t) {
+    const m = this.meta, row = h_flex().id("nn-page-title").flex_none().px(14).pt(12).pb(2).min_w(0).text_size(22).font_semibold();
+    if (this.titleEdit) {
+      return row.child(h_flex().flex_1().min_w(0).track_focus(this.fieldFocus)
+        .on_key_down((e, cx) => { if (e.keystroke === "escape") { this.closeTitle(cx); cx.notify(); } })
+        .child(Input.new(this.titleEdit).flex_1().text_size(22).text_color(t.foreground)));
+    }
+    return row.when(!m.readonly, (el) => el.cursor_pointer().on_click((_e, cx) => this.editTitle(cx)))
+      .child(div().min_w(0).truncate().text_color(m.title ? t.foreground : t.dim).child(m.title || "Untitled"));
+  }
+
+  editTitle(cx) {
+    if (!this.endEdit(cx)) return;
+    const state = InputState.new({ value: this.meta.title ?? "" });
+    const done = (_e, cx) => { if (this.titleEdit === state) { this.endTitle(cx); cx.notify(); } };
+    state.on("blur", done);
+    state.on("submit", done);
+    this.fieldFocus ??= cx.focus_handle();
+    this.titleEdit = state;
+    state.focus();
+    cx.notify();
+  }
+
+  closeTitle(cx) {
+    const state = this.titleEdit;
+    if (!state) return;
+    this.titleEdit = null;
+    release(state, cx);
+  }
+
+  // Renames the page in Notion through the upload queue; with no `cx` (the view is going away) the draft is dropped.
+  // The new title shows at once and goes back if Notion refuses it.
+  endTitle(cx) {
+    const title = this.titleEdit?.value().replace(/\s+/g, " ").trim();
+    this.closeTitle(cx);
+    const id = this.page, m = this.meta, before = m?.title ?? "";
+    if (title === undefined || !cx || title === before) return;
+    m.title = title;
+    cx.spawn(async (cx) => {
+      try {
+        // The title property's id is "title" in every page, database rows included.
+        await this.net(() => this.api.setProperty(id, { name: "title", type: "title" }, title));
+        renamed.add(id.replace(/-/g, "")); renamedRev++;
+        await this.disk(() => putMeta(id, m));
+        if (this.meta === m) this.errors.title = null;
+      } catch (e) {
+        if (m.title === title) m.title = before;
+        if (this.meta === m) this.errors.title = `Cannot rename page: ${e.message}`;
+      }
       cx.notify();
     });
   }
@@ -434,6 +498,7 @@ class NotionNotes extends View {
         .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.blocked).child("Changed in Notion"))
         .child(button("nn-reload", "Reload", false, (cx) => this.reload(cx)))
         .child(button("nn-overwrite", "Overwrite", true, (cx) => this.overwrite(cx)))))
+      .when(Boolean(this.editor), (el) => el.child(this.renderTitle(t)))
       .child(body);
   }
 }

@@ -35,7 +35,7 @@ const LISTS = new Set(["bullet", "numbered", "todo"]);
 const LEAVES_TYPE = new Set([...LISTS, "heading", "quote"]);
 const sameBlock = (a, b) => a.from === b.from && a.raw === b.raw;
 // Released late because closing can run inside the state's own submit or blur event.
-const release = (state, cx) => (cx ? cx.timer.after(300, () => state.release()) : state.release());
+export const release = (state, cx) => (cx ? cx.timer.after(300, () => state.release()) : state.release());
 const menuBox = (id, w, t) => v_flex().id(id).w(w).p(4).gap(1).rounded(8).border_1().border_color(t.border).bg(t.popover);
 const menuRow = (id, on, t) => h_flex().id(id).h(26).px(8).items_center().rounded(4).cursor_pointer()
   .when(on, (r) => r.bg(t.hover)).hover((s) => s.bg(t.hover));
@@ -128,10 +128,12 @@ export const readMethods = {
   // Saves and closes the open block. A stale one stays open with its draft unless `force`d
   // (the page or view is going away). True when nothing is left open.
   endEdit(cx, force = false) {
-    // Every path that ends or switches block editing also ends a cell edit, so only one of the two is ever open.
+    // Every path that ends or switches block editing also ends a cell or title edit, so only one field is ever open.
     this.endCell(cx);
+    this.endTitle(cx);
     if (!this.editing) return true;
-    const ok = this.commit();
+    // A line added by a click below the note is taken out again when nothing was typed in it.
+    const ok = this.editing.added && !this.editing.state.value() ? this.write(null) : this.commit();
     if (!ok && force) this.errors.draft = `Not saved, the block changed in Notion: ${this.draft()}`;
     if (ok || force) this.closeEdit(cx);
     cx?.notify();
@@ -210,6 +212,19 @@ export const readMethods = {
       case "backspace": this.backspace(cx); break;
       default: return;
     }
+    cx.notify();
+  },
+
+  // A click below the last block writes at the end of the note: in its trailing empty line, or in one added for it.
+  writeAtEnd(e, cx) {
+    if (e.modifiers?.platform || this.meta.readonly || !this.endEdit(cx)) return;
+    const text = this.editor.value(), added = this.blocks().at(-1)?.type !== "blank";
+    if (added) this.setText(`${text}\n`);
+    const last = this.blocks().at(-1);
+    // A last tag that takes the lines below it keeps the new line: the text is left as it was.
+    if (last.type !== "blank") return this.setText(text);
+    this.startEdit(last, cx);
+    if (this.editing) this.editing.added = added;
     cx.notify();
   },
 
@@ -481,6 +496,11 @@ export const readMethods = {
     const rows = blocks.map((b) => row(b));
     // The open block no longer matches any block of the note: keep its draft on screen with the notice.
     if (ed && !blocks.some((b) => sameBlock(b, ed.block))) { ed.stale = true; rows.push(h_flex().flex_none().child(this.field(t, 13))); }
+    if (!ro) {
+      rows.push(div().id("nn-tail").flex_grow(1).min_h(64).cursor_pointer().text_color(t.dim)
+        .on_click((e, cx) => this.writeAtEnd(e, cx))
+        .when(!ed && this.editor.value() === "", (el) => el.child("Click to write")));
+    }
     return v_flex().id("nn-read").flex_1().min_h(0).overflow_y_scrollbar().px(14).py(10).gap(4)
       .children(rows);
   },

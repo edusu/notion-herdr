@@ -42,8 +42,9 @@ changes the note in the ways below; everything else needs Markdown. Read-only no
   - `Enter` saves and starts a new block below, continuing a bullet, numbered or to-do list; on an
     empty list item it turns the item into a paragraph.
   - `Backspace` on an empty field turns a list item, heading or quote into a paragraph, and
-    deletes an empty paragraph, moving into the end of the block above. An empty note always shows
-    one empty line to click.
+    deletes an empty paragraph, moving into the end of the block above.
+  - A click in the space below the last block writes at the end of the note, in a new line that
+    is taken out again if you leave it empty. An empty note shows **Click to write** there.
   - `↑` / `↓` save and move to the previous or next editable block.
   - If the block changed in Notion while open, the field stays open with **This block changed in
     Notion; copy your text or discard it** and a **Discard** button; nothing is overwritten. If
@@ -56,6 +57,9 @@ changes the note in the ways below; everything else needs Markdown. Read-only no
   keeps the block's text; Divider adds a `***` line below. **Page** (`/page`) creates a subpage
   titled with the rest of the block's text (or "Untitled"), puts its link in place of the block and
   opens it in a pane to the right. Code is not offered.
+- **Title**: the page title is shown above the note, in Read and Markdown. Click it to rename the
+  page; `Enter` or leaving the field saves it in Notion, `Esc` cancels; other open notes that link the page read it again from
+  Notion to show the new name. Not in read-only notes.
 - **To-dos**: the checkbox marks or unmarks the item in the note, and the edit uploads like any
   other. Done items show struck through. Not clickable in read-only notes, nor for to-dos nested
   inside other tags (columns...).
@@ -131,7 +135,8 @@ Only `ntn`, with ids and titles passed as separate arguments, never inside a she
   `ntn api v1/search -d <json>`.
 - once per app session, when the picker first opens, `ntn api v1/search` filtered to data
   sources, to name database parents in picker rows (failure is silent; rows show without it).
-- `ntn api v1/pages/<id> -X PATCH -d <json>` to write one cell of a database row, and
+- `ntn api v1/pages/<id> -X PATCH -d <json>` to write one cell of a database row or rename the
+  open page (its `title` property), and
   `ntn api v1/pages -d <json>` (POST) to add a row with its title.
 
 The header's open button runs `open notion://www.notion.so/<id>` (the Notion app); if that
