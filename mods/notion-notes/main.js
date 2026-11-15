@@ -196,25 +196,33 @@ class NotionNotes extends View {
       try {
         await this.net(async () => {
           made = await this.api.create(title, `page:${id}`);
-          const remote = await this.api.get(id);
-          if (this.meta !== m) return;
-          const found = appendedPage(remote.markdown, m.base, made.id);
+          // The page exists now: a failed read must not keep its tag out of the note.
+          const remote = await this.api.get(id).catch(() => null);
+          const found = remote && appendedPage(remote.markdown, m.base, made.id);
           // Notion refuses an upload that lacks the new tag ("would delete 1 child page"), so it is never dropped.
           const line = found ?? `<page url="${pageUrl(made.id)}">${title}</page>`;
-          const text = this.editor.value();
-          this.setText(replaceBlock(text, block, line) ?? (text ? `${text}\n${line}` : line), m);
+          const place = (text) => replaceBlock(text, block, line) ?? (text ? `${text}\n${line}` : line);
           // The old base would read as a conflict now; with no tag found it stays, and the upload reports it.
-          if (found) {
-            m.base = remote.markdown;
-            await this.disk(() => putMeta(id, m));
+          if (found) m.base = remote.markdown;
+          if (this.meta === m) {
+            this.setText(place(this.editor.value()), m);
+            if (found) await this.disk(() => putMeta(id, m));
+            return;
           }
+          // The note was left meanwhile: its saved copy gets the tag, queued after the save that leaving started.
+          await this.disk(async () => {
+            const text = place(m.savedText);
+            changed(m);
+            await persist(id, m, text);
+            m.savedText = text; m.savedRev = m.rev;
+          });
         });
         if (this.meta === m) {
           this.errors.page = null;
           this.openPage(made.id, null, {}, cx);
         }
       } catch (e) {
-        if (this.meta === m) this.errors.page = `Cannot create page: ${e.message}${made ? " (the subpage exists in Notion; its link will appear after the next refresh)" : ""}`;
+        if (this.meta === m) this.errors.page = `Cannot create page: ${e.message}${made ? " (the subpage exists in Notion)" : ""}`;
       }
       this.creating = null;
       cx.notify();
@@ -304,7 +312,7 @@ class NotionNotes extends View {
     this.release();
     this.editor?.release();
     this.editor = null; this.page = id; this.meta = null; this.conflict = null; this.dirty = false;
-    this.errors = { settings: this.errors.settings, map: this.errors.map };
+    this.errors = { settings: this.errors.settings, map: this.errors.map, draft: this.errors.draft };
     if (!id) return;
     const gen = ++this.gen;
     cx.spawn(async (cx) => {

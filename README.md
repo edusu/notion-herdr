@@ -36,26 +36,32 @@ note in the ways below; everything else needs Edit. Read-only notes cannot be ch
 
 - **Text blocks**: click a paragraph, heading, bullet, numbered item, to-do, one-line quote or empty
   line to edit it in a one-line field that holds only its text (the `#`, `-`, `1.` or `> ` stays
-  outside the field). ⌘-click is left alone. The field saves when it loses focus or you press `Esc`;
+  outside the field). Any click on the block opens the field, including one on a link in its text
+  or a drag to select it; ⌘-click is left alone, and Edit follows links. The field saves when it loses focus or you press `Esc`;
   the edit then uploads like any other (see Sync rules).
   - `Enter` saves and starts a new block below, continuing a bullet, numbered or to-do list; on an
     empty list item it turns the item into a paragraph.
   - `Backspace` on an empty field turns a list item, heading or quote into a paragraph, and
-    deletes an empty paragraph, moving into the end of the block above.
+    deletes an empty paragraph, moving into the end of the block above. An empty note always shows
+    one empty line to click.
   - `↑` / `↓` save and move to the previous or next editable block.
   - If the block changed in Notion while open, the field stays open with **This block changed in
-    Notion; copy your text or discard it** and a **Discard** button; nothing is overwritten.
+    Notion; copy your text or discard it** and a **Discard** button; nothing is overwritten. If
+    you switch note or close the panel then, the text is shown in a **Not saved** notice instead.
+  - If the text you type turns the block into one that spans the lines below (a ```` ``` ```` fence,
+    a table row, a tag), `Enter` saves it and closes the field without adding a block.
 - **`/` menu**: typing `/` at the start of the field or after a space opens a menu of Text,
   Heading 1-3, To-do, Bulleted list, Numbered list, Quote, Divider and Page; keep typing to filter
   (English and Spanish words), `↑` / `↓` and `Enter` or a click to pick, `Esc` to close. A type
-  keeps the block's text; Divider adds a `---` line below. **Page** (`/page`) creates a subpage
+  keeps the block's text; Divider adds a `***` line below. **Page** (`/page`) creates a subpage
   titled with the rest of the block's text (or "Untitled"), puts its link in place of the block and
   opens it in a pane to the right. Code is not offered.
 - **To-dos**: the checkbox marks or unmarks the item in the note, and the edit uploads like any
   other. Done items show struck through. Not clickable in read-only notes, nor for to-dos nested
   inside other tags (columns...).
 - **Callouts and toggles**: callouts are drawn as boxes with their icon and toggles as collapsible
-  sections (their open state is not remembered). Their to-dos can be ticked; their other text is
+  sections (their open state is not remembered, and is kept by line: adding lines above an open
+  toggle can open another one instead). Their to-dos can be ticked; their other text is
   shown but not editable in Read. One whose tags share a line with text falls back to plain markdown.
 - **Subpages**: click opens the page in a pane to the right, ⌘-click opens it in Notion.
 - **Inline databases**: a table of the first 50 rows, title column first and then the schema's order

@@ -42,9 +42,11 @@ const menuRow = (id, on, t) => h_flex().id(id).h(26).px(8).items_center().rounde
 
 export const readMethods = {
   toggleBlock(block, cx) {
-    if (this.editor && !this.meta.readonly) {
+    // The open block is saved first, so a click on its own checkbox ticks the saved text and does not leave the field stale.
+    if (this.editor && !this.meta.readonly && this.endEdit(cx)) {
+      const cur = this.blocks().find((b) => b.from === block.from) ?? block;
       // null: the text moved under this block since it was drawn.
-      const next = toggleTodo(this.editor.value(), block.from, block.label);
+      const next = toggleTodo(this.editor.value(), cur.from, cur.label);
       if (next !== null) this.setText(next);
     }
     cx.notify();
@@ -84,6 +86,7 @@ export const readMethods = {
       cx.notify();
     });
     this.fieldFocus ??= cx.focus_handle();
+    this.errors.draft = null;
     this.editing = { block, state, ...parts, stale: false, last: parts.text, slash: null };
     state.focus();
     if (atEnd) state.set_selected_range({ start: parts.text.length, end: parts.text.length });
@@ -129,6 +132,7 @@ export const readMethods = {
     this.endCell(cx);
     if (!this.editing) return true;
     const ok = this.commit();
+    if (!ok && force) this.errors.draft = `Not saved, the block changed in Notion: ${this.draft()}`;
     if (ok || force) this.closeEdit(cx);
     cx?.notify();
     return ok || force;
@@ -166,8 +170,8 @@ export const readMethods = {
       return this.createPage(block, text.trim() || "Untitled", cx);
     }
     if (id !== "divider") return this.swap(retype(prefix + text, id), cx);
-    // write("---\n") leaves an empty line below the divider; that line is the one that opens.
-    if (this.write(text === "" ? "---\n" : `${prefix + text}\n---\n`)) this.openAt(block.from + (text === "" ? 1 : 2), cx);
+    // `---` under a text line would read as a setext heading. write("***\n") leaves an empty line below the divider; that line is the one that opens.
+    if (this.write(text === "" ? "***\n" : `${prefix + text}\n***\n`)) this.openAt(block.from + (text === "" ? 1 : 2), cx);
   },
 
   enter(cx) {
@@ -175,6 +179,8 @@ export const readMethods = {
     if (!state.value() && LISTS.has(block.type)) return this.swap(retype(prefix, "paragraph"), cx);
     if (!this.commit()) return;
     const cur = this.blocks().find((b) => b.from === block.from);
+    // The draft opened a block that takes the lines below (a code fence, a table, a toggle): nothing is inserted.
+    if (!cur || cur.to !== cur.from) return this.closeEdit(cx);
     if (this.apply(insertAfter(this.editor.value(), cur, continuation(cur)))) this.openAt(cur.to + 1, cx);
   },
 
@@ -450,7 +456,7 @@ export const readMethods = {
         }
         case "empty":
         case "blank":
-          return this.isEditing(block) ? pad(0).child(this.field(t, 13)) : inPlace(div().flex_none().h(8));
+          return pad(0).child(inPlace(div().flex_none().h(8)));
         case "heading":
           return pad(0).child(inPlace(div().flex_1().min_w(0).child(md(id, block.raw)), HEADING_SIZE[block.level]));
         default: {
@@ -482,7 +488,8 @@ export const readMethods = {
   // Renders happen far more often than edits, so the parse is kept until the text changes.
   blocks() {
     const text = this.editor.value();
-    if (text !== this.parsedText) { this.parsedText = text; this.parsed = parseBlocks(text); }
+    // An empty note gets one blank block, so there is always a line to click and Backspace never removes the last one.
+    if (text !== this.parsedText) { this.parsedText = text; this.parsed = text ? parseBlocks(text) : [{ type: "blank", from: 0, to: 0, raw: "" }]; }
     return this.parsed;
   },
 };
