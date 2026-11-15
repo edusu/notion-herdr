@@ -126,6 +126,86 @@ export function parseBlocks(text) {
   return blocks;
 }
 
+// The lines of `text` when `b`'s span still holds `b.raw`, else null: the page changed underneath.
+function linesOf(text, b) {
+  if (typeof text !== "string") return null;
+  const lines = text.split("\n");
+  const ok = Number.isInteger(b?.from) && Number.isInteger(b.to) && b.from >= 0 && b.from <= b.to && b.to < lines.length
+    && lines.slice(b.from, b.to + 1).join("\n") === b.raw;
+  return ok ? lines : null;
+}
+
+/** `text` with the lines of `block` replaced by `raw` (several lines, or "" to remove them), or null if `block` is stale. */
+export function replaceBlock(text, block, raw) {
+  const lines = linesOf(text, block);
+  if (!lines) return null;
+  lines.splice(block.from, block.to - block.from + 1, ...(raw === "" ? [] : [raw]));
+  return lines.join("\n");
+}
+
+/**
+ * `text` with `raw` added as new lines after `block`, or null if `block` is stale. An empty note
+ * has no block to insert after, so the caller never gets here with `text === ""`.
+ */
+export function insertAfter(text, block, raw) {
+  const lines = linesOf(text, block);
+  if (!lines) return null;
+  lines.splice(block.to + 1, 0, raw);
+  return lines.join("\n");
+}
+
+const indentOf = (l) => /^\s*/.exec(l)[0];
+const PREFIX = { paragraph: "", h1: "# ", h2: "## ", h3: "### ", todo: "- [ ] ", bullet: "- ", numbered: "1. ", quote: "> " };
+// Only these keep their indentation: the parser reads a heading or a quote only when unindented.
+const KEEPS_INDENT = new Set(["paragraph", "todo", "bullet", "numbered"]);
+const RETYPABLE = new Set(["paragraph", "heading", "todo", "bullet", "numbered", "quote"]);
+
+/**
+ * Gives a one-line block another type (`paragraph`, `h1`–`h3`, `todo`, `bullet`, `numbered` or
+ * `quote`), keeping its text. A done to-do loses its `[x]`. `raw` is returned unchanged when it
+ * is not a one-line paragraph, heading, list item or quote, or when `type` is unknown.
+ */
+export function retype(raw, type) {
+  if (typeof raw !== "string" || raw.includes("\n") || !Object.hasOwn(PREFIX, type)) return raw;
+  const [kind, , data] = block([raw], 0);
+  if (!RETYPABLE.has(kind)) return raw;
+  return (KEEPS_INDENT.has(type) ? indentOf(raw) : "") + PREFIX[type] + (data.text ?? data.label);
+}
+
+/**
+ * The prefix of the block Enter creates after `block`, with its indentation: the same bullet
+ * marker, an open to-do, or the next number with the same `.` or `)`. Anything else gives "".
+ */
+export function continuation(block) {
+  const [, indent, mark] = /^(\s*)(\S+)/.exec(block?.raw ?? "") ?? [];
+  switch (block?.type) {
+    case "bullet": return indent + mark + " ";
+    case "todo": return indent + PREFIX.todo;
+    case "numbered": return indent + (parseInt(mark) + 1) + mark.slice(-1) + " ";
+    default: return "";
+  }
+}
+
+/**
+ * Where the `/word` under the cursor starts, as `{ start, query }`, given the field's value
+ * before and after one change; null when the change is not one typed or deleted character, or
+ * the cursor is not at the end of a `/word` that starts the text or follows whitespace. The
+ * field does not report its cursor, so it is taken from the common prefix: in a run of equal
+ * characters it lands at the end of the run, which only matters when word characters follow.
+ */
+export function slashQuery(prev, next) {
+  if (typeof prev !== "string" || typeof next !== "string") return null;
+  const grew = next.length - prev.length;
+  if (Math.abs(grew) !== 1) return null;
+  const [short, long] = grew > 0 ? [prev, next] : [next, prev];
+  let p = 0;
+  while (p < short.length && short[p] === long[p]) p++;
+  if (short.slice(p) !== long.slice(p + 1)) return null;
+  const pos = grew > 0 ? p + 1 : p;
+  const m = /(?:^|\s)\/([\p{L}\p{N}]*)$/u.exec(next.slice(0, pos));
+  return m && { start: pos - m[1].length - 1, query: m[1] };
+}
+
 const join = (rich) => rich.map((t) => t.plain_text).join("");
 
 /**

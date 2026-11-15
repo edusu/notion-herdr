@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { client, upload, serial, titleOf, refreshDecision, pages, ago, pageUrl, readable, mappedPage, sourceNames, canonicalId } from "../mods/notion-notes/notion.js";
-import { parseBlocks, todos, toggleTodo, cell } from "../mods/notion-notes/blocks.js";
+import { parseBlocks, todos, toggleTodo, cell, replaceBlock, insertAfter, retype, continuation, slashQuery } from "../mods/notion-notes/blocks.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ntn = join(here, "fake-ntn.mjs");
@@ -350,4 +350,112 @@ test("a tag closes across lines and ignores tags inside fenced code; table rows 
 
 test("readable() finds the url attribute in any position", () => {
   assert.equal(readable('<page color="gray" url="u">T</page>'), "📄 [T](u)\n");
+});
+
+test("replaceBlock swaps a block's lines, removes them for an empty raw, and refuses a stale block", () => {
+  const text = "# Title\nfirst\n> a\n> b\nlast";
+  const [h, p, q, l] = parseBlocks(text);
+  for (const b of parseBlocks(text)) assert.equal(replaceBlock(text, b, b.raw), text);
+  assert.equal(replaceBlock(text, p, "- first\n- second"), "# Title\n- first\n- second\n> a\n> b\nlast");
+  assert.equal(replaceBlock(text, q, "quote"), "# Title\nfirst\nquote\nlast");
+  assert.equal(replaceBlock(text, h, ""), "first\n> a\n> b\nlast");
+  assert.equal(replaceBlock(text, l, ""), "# Title\nfirst\n> a\n> b");
+  assert.equal(replaceBlock("only", parseBlocks("only")[0], ""), "");
+  // The page changed underneath: a line was inserted above, or the block's text differs.
+  assert.equal(replaceBlock("new\n" + text, p, "x"), null);
+  assert.equal(replaceBlock(text.replace("first", "edited"), p, "x"), null);
+  assert.equal(replaceBlock("# Title", p, "x"), null);
+  assert.equal(replaceBlock(text, { from: 3, to: 9, raw: "> b\nlast" }, "x"), null);
+  assert.equal(replaceBlock(text, { from: -1, to: 0, raw: "" }, "x"), null);
+  assert.equal(replaceBlock(text, undefined, "x"), null);
+});
+
+test("insertAfter adds lines below a block and refuses a stale block", () => {
+  const text = "# Title\n> a\n> b\nlast";
+  const [h, q, l] = parseBlocks(text);
+  assert.equal(insertAfter(text, h, "- new"), "# Title\n- new\n> a\n> b\nlast");
+  assert.equal(insertAfter(text, q, "one\ntwo"), "# Title\n> a\n> b\none\ntwo\nlast");
+  assert.equal(insertAfter(text, l, "- [ ] "), text + "\n- [ ] ");
+  assert.equal(insertAfter("new\n" + text, h, "x"), null);
+  assert.equal(insertAfter("# Title", q, "x"), null);
+});
+
+test("retype rewrites the prefix of a one-line block and keeps its text", () => {
+  const prefix = { paragraph: "", h1: "# ", h2: "## ", h3: "### ", todo: "- [ ] ", bullet: "- ", numbered: "1. ", quote: "> " };
+  const sources = ["text", "# text", "## text", "### text", "- [ ] text", "- [x] text", "- text", "* text", "1. text", "7) text", "> text"];
+  for (const from of sources) for (const [type, p] of Object.entries(prefix)) {
+    assert.equal(retype(from, type), p + "text", `${from} -> ${type}`);
+  }
+  // Lists and paragraphs keep their indentation; headings and quotes drop it.
+  const indented = { paragraph: "  ", todo: "  - [ ] ", bullet: "  - ", numbered: "  1. ", h2: "## ", quote: "> " };
+  for (const from of ["  note", "  - note", "  * [x] note", "  3. note", "  4) note"]) {
+    for (const [type, p] of Object.entries(indented)) assert.equal(retype(from, type), p + "note", `${from} -> ${type}`);
+  }
+  assert.equal(retype("\t- note", "bullet"), "\t- note");
+  assert.equal(retype("\tnote", "todo"), "\t- [ ] note");
+  assert.equal(retype("-  two  spaces ", "h1"), "#  two  spaces ");
+  assert.equal(retype("- ", "h2"), "## ");
+});
+
+test("retype returns the input when it is not a one-line block or the type is unknown", () => {
+  assert.equal(retype("a\nb", "bullet"), "a\nb");
+  assert.equal(retype("> a\n> b", "paragraph"), "> a\n> b");
+  assert.equal(retype("text", "code"), "text");
+  assert.equal(retype("text", undefined), "text");
+  for (const raw of ["---", "<empty-block/>", "| a |", "```", ""]) assert.equal(retype(raw, "bullet"), raw);
+});
+
+test("continuation gives the prefix of the block Enter creates, with the same indentation", () => {
+  const next = (raw) => continuation(parseBlocks(raw)[0]);
+  assert.equal(next("- a"), "- ");
+  assert.equal(next("* a"), "* ");
+  assert.equal(next("+ a"), "+ ");
+  assert.equal(next("\t\t- nested"), "\t\t- ");
+  assert.equal(next("  * nested"), "  * ");
+  assert.equal(next("- [x] done"), "- [ ] ");
+  assert.equal(next("  * [ ] open"), "  - [ ] ");
+  assert.equal(next("1. a"), "2. ");
+  assert.equal(next("9. a"), "10. ");
+  assert.equal(next("3) a"), "4) ");
+  assert.equal(next("  99) a"), "  100) ");
+  for (const raw of ["# h", "text", "  text", "> q", "---", "```\ncode\n```", "| a |"]) assert.equal(next(raw), "", raw);
+});
+
+test("slashQuery finds a /word at the cursor after a one-character edit", () => {
+  assert.deepEqual(slashQuery("", "/"), { start: 0, query: "" });
+  assert.deepEqual(slashQuery("/", "/a"), { start: 0, query: "a" });
+  assert.deepEqual(slashQuery("/a", "/as"), { start: 0, query: "as" });
+  assert.deepEqual(slashQuery("buy milk ", "buy milk /"), { start: 9, query: "" });
+  assert.deepEqual(slashQuery("buy  milk", "buy / milk"), { start: 4, query: "" });
+  assert.deepEqual(slashQuery("/h", "/h1"), { start: 0, query: "h1" });
+  assert.deepEqual(slashQuery("/títul", "/título"), { start: 0, query: "título" });
+  // Inserting before text that follows: the cursor is right after the typed character.
+  assert.deepEqual(slashQuery("a b", "a /b"), { start: 2, query: "" });
+  assert.deepEqual(slashQuery("a\tb", "a\t/b"), { start: 2, query: "" });
+  // Deleting back to the slash keeps the menu open; deleting the slash or going past it closes it.
+  assert.deepEqual(slashQuery("/as", "/a"), { start: 0, query: "a" });
+  assert.deepEqual(slashQuery("/a", "/"), { start: 0, query: "" });
+  assert.equal(slashQuery("/", ""), null);
+  assert.equal(slashQuery("x /", "x "), null);
+  assert.equal(slashQuery("x /a", "x a"), null);
+  assert.deepEqual(slashQuery("/as", "/s"), { start: 0, query: "" });
+});
+
+test("slashQuery gives null for a slash inside a word, a space, a paste or any other edit", () => {
+  assert.equal(slashQuery("a", "a/"), null);
+  assert.equal(slashQuery("a/", "a/b"), null);
+  assert.equal(slashQuery("http:/", "http://"), null);
+  assert.equal(slashQuery("/as", "/as "), null);
+  assert.equal(slashQuery("/as", "/as-"), null);
+  assert.equal(slashQuery("", "/ab"), null);
+  assert.equal(slashQuery("x", "x/ab"), null);
+  assert.equal(slashQuery("/a", "/abc"), null);
+  assert.equal(slashQuery("/abc", "/"), null);
+  assert.equal(slashQuery("/abc", "/x"), null);
+  assert.equal(slashQuery("/a", "/b"), null);
+  assert.equal(slashQuery("/a", "/a"), null);
+  assert.equal(slashQuery("note", ""), null);
+  assert.equal(slashQuery("hello world", "hello /"), null);
+  assert.equal(slashQuery(undefined, "/"), null);
+  assert.equal(replaceBlock(undefined, { from: 0, to: 0, raw: "" }, "x"), null);
 });
