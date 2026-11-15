@@ -6,7 +6,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from "
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { client, upload, serial, titleOf, refreshDecision, pages, ago, pageUrl, todos, toggleTodo, mappedPage, sourceNames, canonicalId } from "../mods/notion-notes/notion.js";
+import { client, upload, serial, titleOf, refreshDecision, pages, ago, pageUrl, readable, mappedPage, sourceNames, canonicalId } from "../mods/notion-notes/notion.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ntn = join(here, "fake-ntn.mjs");
@@ -75,21 +75,6 @@ test("Open in Notion uses the app link, a Notion https URL, or one built from th
   for (const bad of ["https://evil.example/notion.so", "http://www.notion.so/x", "file:///etc/passwd", "https://notion.so.evil.com/x", null])
     assert.equal(pageUrl(ID, bad, false), "https://www.notion.so/418e82c31287815494b3fc5ad78fc192");
   assert.equal(pageUrl("../../etc", own, true), null);
-});
-
-test("to-dos: nested items parse, code fences are ignored, a stale line is not flipped", () => {
-  const text = "# Tasks\n- [ ] one\n\t- [x] nested\n```md\n- [ ] in code\n```\n* [X] star";
-  assert.deepEqual(todos(text), [
-    { line: 1, done: false, label: "one", depth: 0 },
-    { line: 2, done: true, label: "nested", depth: 1 },
-    { line: 6, done: true, label: "star", depth: 0 },
-  ]);
-  assert.equal(toggleTodo(text, 1, "one"), text.replace("- [ ] one", "- [x] one"));
-  assert.equal(toggleTodo(text, 2, "nested"), text.replace("[x] nested", "[ ] nested"));
-  assert.equal(toggleTodo(text, 4, "in code"), null);
-  // A refresh inserted a line: index 1 now holds another to-do, so nothing flips.
-  assert.equal(toggleTodo("# Tasks\n- [ ] new\n- [ ] one", 1, "one"), null);
-  assert.equal(toggleTodo(text, 0, "one"), null);
 });
 
 test("notion-note-append finds the mapped folder upwards and refuses an unmapped folder, empty stdin or unsent Herdr edits", async () => {
@@ -185,4 +170,11 @@ test("errors become one readable line", async () => {
 test("an emptied note uploads as Notion's empty block", async () => {
   reset({ pages: { [ID]: { title: "t", markdown: "<empty-block/>" } } });
   assert.deepEqual(await upload(api, ID, "  \n", "<empty-block/>", file, write), { base: "<empty-block/>" });
+});
+
+test("read view turns Notion tags into markdown", () => {
+  const md = '<page url="https://app.notion.com/p/a">General</page>\n<empty-block/>\n<database url="https://app.notion.com/p/b" inline="true" data-source-url="collection://x">Tasks</database>';
+  assert.equal(readable(md), "📄 [General](https://app.notion.com/p/a)\n\n\n🗃️ [Tasks](https://app.notion.com/p/b)\n");
+  // Consecutive child pages stay separate paragraphs instead of one run-on line.
+  assert.equal(readable('<page url="u1">A</page>\n<page url="u2">B</page>'), "📄 [A](u1)\n\n📄 [B](u2)\n");
 });

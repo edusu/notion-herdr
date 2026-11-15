@@ -67,25 +67,15 @@ export function pageUrl(id, url, app) {
   return own ? url : `https://www.notion.so/${bare}`;
 }
 
-/** The note's `- [ ]` / `- [x]` lines outside fenced code: `{ line, done, label, depth }`. */
-export function todos(text) {
-  const out = [];
-  let fence = false;
-  text.split("\n").forEach((l, line) => {
-    if (/^\s*(```|~~~)/.test(l)) fence = !fence;
-    const m = !fence && /^(\s*)[-*+] \[([ xX])\] (.*)$/.exec(l);
-    if (m) out.push({ line, done: m[2] !== " ", label: m[3], depth: m[1].replace(/\t/g, "  ").length >> 1 });
-  });
-  return out;
-}
-
-/** Flips the to-do at `line`, or returns null if that line is no longer the to-do `label`. */
-export function toggleTodo(text, line, label) {
-  const t = todos(text).find((x) => x.line === line);
-  if (!t || t.label !== label) return null;
-  const lines = text.split("\n");
-  lines[line] = lines[line].replace(/\[[ xX]\]/, t.done ? "[ ]" : "[x]");
-  return lines.join("\n");
+/**
+ * The note for the read view: Notion's own tags for empty lines, child pages and databases
+ * become plain markdown, each child on its own paragraph as Notion shows it. Display only: uploads keep the tags so children are not deleted.
+ */
+export function readable(text) {
+  return text
+    .replace(/^[ \t]*<empty-block\/>[ \t]*$/gm, "")
+    .replace(/<page url="([^"]*)"[^>]*>([\s\S]*?)<\/page>/g, "📄 [$2]($1)\n")
+    .replace(/<database url="([^"]*)"[^>]*>([\s\S]*?)<\/database>/g, "🗃️ [$2]($1)\n");
 }
 
 /**

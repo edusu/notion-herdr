@@ -5,7 +5,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Editor, EditorState, TextView } from "gpui-base";
 import { exec, theme, settings, props, run, shared, layout, readTextFile } from "herdr";
-import { client, upload, serial, refreshDecision, pageUrl, todos, toggleTodo, validId } from "./notion.js";
+import { client, upload, serial, refreshDecision, pageUrl, validId, readable } from "./notion.js";
 import { pickerMethods } from "./picker.js";
 import { NAME, MAP_REV, dir, mapPath, cachePath, metaPath, uploadPath, spaceKey, spacePage, readJson, put, loadSettings } from "./store.js";
 import * as fs from "fs/promises";
@@ -313,17 +313,6 @@ class NotionNotes extends View {
     });
   }
 
-  // The read view cannot report clicks on its task items, so a strip above it toggles them
-  // in the editor text; saving and uploading then follow the normal path.
-  toggleTask(task, cx) {
-    const next = toggleTodo(this.editor.value(), task.line, task.label);
-    if (next != null) {
-      this.editor.set_value(next);
-      this.edited(this.meta);
-    }
-    cx.notify();
-  }
-
   toggleView(cx) {
     this.reading = !this.reading;
     try { localStorage.setItem("view", this.reading ? "read" : "edit"); } catch {}
@@ -367,20 +356,14 @@ class NotionNotes extends View {
     }
     const t = theme(), m = this.meta, pane = this.mode === "pane";
     const text = this.reading && this.editor ? this.editor.value() : null;
-    const tasks = text != null ? todos(text) : [];
     const error = Object.values(this.errors).find(Boolean);
     const status = this.statusText(m);
     const button = (id, label, primary, action) => h_flex().id(id).h(26).px(10).items_center().rounded(6).flex_none()
       .border_1().border_color(primary ? t.solid : t.input).bg(primary ? t.solid : t.raised)
       .text_color(primary ? t.solid_foreground : t.foreground).text_size(12).cursor_pointer()
       .hover((s) => s.opacity(0.88)).on_click((_e, cx) => action(cx)).child(label);
-    const taskRow = (task, i) => h_flex().id(`nn-task-${i}`).h(22).pl(task.depth * 16).gap(8).items_center()
-      .child(div().size(13).flex_none().rounded(3).border_1().border_color(task.done ? t.accent : t.input).bg(task.done ? t.accent : t.background)
-        .text_size(10).text_color(t.accent_foreground).items_center().justify_center().child(task.done ? "✓" : ""))
-      .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(task.done ? t.dim : t.foreground).child(task.label))
-      .when(!m.readonly, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.toggleTask(task, cx)));
     // The editor state stays alive while reading, so cursor and undo survive the switch.
-    const body = text != null ? TextView.markdown("nn-read", text).scrollable(true).selectable(true).flex_1().min_h(0).px(14).py(10)
+    const body = text != null ? TextView.markdown("nn-read", readable(text)).scrollable(true).selectable(true).flex_1().min_h(0).px(14).py(10)
       : this.editor ? Editor.new(this.editor).flex_1().min_h(0).p(6)
       : !this.page && this.mode === "panel" ? v_flex().flex_1().items_center().justify_center().gap(10)
           .child(div().text_color(t.dim).child("No note for this space"))
@@ -404,8 +387,6 @@ class NotionNotes extends View {
         .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.blocked).child("Changed in Notion"))
         .child(button("nn-reload", "Reload", false, (cx) => this.reload(cx)))
         .child(button("nn-overwrite", "Overwrite", true, (cx) => this.overwrite(cx)))))
-      .when(tasks.length > 0, (el) => el.child(v_flex().id("nn-tasks").flex_none().max_h(168).overflow_y_scrollbar().px(14).py(8).gap(2)
-        .border_b(1).border_color(t.border).children(tasks.map(taskRow))))
       .child(body);
   }
 }
