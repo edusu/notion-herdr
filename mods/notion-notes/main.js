@@ -3,10 +3,11 @@
 // pane; opened as an overlay (`mod.open`) it is the dialog that chooses or creates a note.
 // The save chain is adapted from tab-notes in ozcberkay/herdr-coban (Apache-2.0).
 import { View, div, svg } from "gpui-kit";
-import { v_flex, h_flex, Editor, EditorState, TextView } from "gpui-base";
+import { v_flex, h_flex, Editor, EditorState } from "gpui-base";
 import { exec, theme, settings, props, run, shared, layout, readTextFile } from "herdr";
-import { client, upload, serial, refreshDecision, pageUrl, validId, readable } from "./notion.js";
+import { client, upload, serial, refreshDecision, pageUrl, validId } from "./notion.js";
 import { pickerMethods } from "./picker.js";
+import { readMethods } from "./read.js";
 import { NAME, MAP_REV, dir, mapPath, cachePath, metaPath, uploadPath, spaceKey, spacePage, readJson, put, loadSettings } from "./store.js";
 import * as fs from "fs/promises";
 
@@ -294,8 +295,7 @@ class NotionNotes extends View {
     this.open(id, cx, true);
   }
 
-  openInNotion(cx) {
-    const id = this.page, url = this.meta?.url;
+  openInNotion(cx, id = this.page, url = this.meta?.url) {
     cx.spawn(async (cx) => {
       try {
         // Without an app for notion://, `open` exits non-zero and the https URL is used instead.
@@ -355,7 +355,6 @@ class NotionNotes extends View {
       }
     }
     const t = theme(), m = this.meta, pane = this.mode === "pane";
-    const text = this.reading && this.editor ? this.editor.value() : null;
     const error = Object.values(this.errors).find(Boolean);
     const status = this.statusText(m);
     const button = (id, label, primary, action) => h_flex().id(id).h(26).px(10).items_center().rounded(6).flex_none()
@@ -363,7 +362,7 @@ class NotionNotes extends View {
       .text_color(primary ? t.solid_foreground : t.foreground).text_size(12).cursor_pointer()
       .hover((s) => s.opacity(0.88)).on_click((_e, cx) => action(cx)).child(label);
     // The editor state stays alive while reading, so cursor and undo survive the switch.
-    const body = text != null ? TextView.markdown("nn-read", readable(text)).scrollable(true).selectable(true).flex_1().min_h(0).px(14).py(10)
+    const body = this.reading && this.editor ? this.renderRead(cx)
       : this.editor ? Editor.new(this.editor).flex_1().min_h(0).p(6)
       : !this.page && this.mode === "panel" ? v_flex().flex_1().items_center().justify_center().gap(10)
           .child(div().text_color(t.dim).child("No note for this space"))
@@ -391,5 +390,5 @@ class NotionNotes extends View {
   }
 }
 
-Object.assign(NotionNotes.prototype, pickerMethods);
+Object.assign(NotionNotes.prototype, pickerMethods, readMethods);
 export default NotionNotes;
