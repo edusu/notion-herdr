@@ -7,7 +7,9 @@ A Herdr Desktop mod that opens a Notion page as an editable markdown note, throu
   (or **Choose note**) to open the picker.
 - **Pane**: `pane.split {direction: "right", mod: "notion-notes", props: {page: "<page id>"}}`.
   Its **To panel** button makes that page the panel's note for the current space (as choosing it
-  in the picker does), shows the panel and closes the pane.
+  in the picker does), shows the panel and closes the pane once its pending saves, uploads and
+  rename have landed. With no panel in the layout it only shows an error; if it cannot tell which
+  pane it is (several note panes in the tab), it asks you to close the pane yourself.
 - **Picker** (dialog, `mod.open {name: "notion-notes"}`): with an empty query it lists the configured data source (or recently
   edited pages); typing searches the workspace (300 ms debounce). The last row creates a page
   with the typed title. `↑`/`↓` move, `Enter` opens in the panel, `⌘Enter` opens a pane to the
@@ -45,8 +47,9 @@ changes the note in the ways below; everything else needs Markdown. Read-only no
     empty list item it turns the item into a paragraph.
   - `Backspace` on an empty field turns a list item, heading or quote into a paragraph, and
     deletes an empty paragraph, moving into the end of the block above.
-  - A click in the space below the last block writes at the end of the note, in a new line that
-    is taken out again if you leave it empty. An empty note shows **Click to write** there.
+  - A click in the space below the last block writes at the end of the note. The new line is only
+    added once you type, and taken out again if you leave it empty, so a click alone changes
+    nothing. An empty note shows **Click to write** there.
   - `↑` / `↓` save and move to the previous or next editable block.
   - If the block changed in Notion while open, the field stays open with **This block changed in
     Notion; copy your text or discard it** and a **Discard** button; nothing is overwritten. If

@@ -23,10 +23,12 @@ const stored = (schema, type, v) => {
   return { name: o.name, color: o.color };
 };
 const fill = (s, props) => Object.fromEntries(Object.entries(props).map(([name, body]) => {
-  const col = s.properties[name];
+  // Like Notion, the title column is also found by its property id, "title".
+  const [key, col] = name in s.properties ? [name, s.properties[name]]
+    : (name === "title" && Object.entries(s.properties).find(([, c]) => c.type === "title")) || [];
   if (!col) fail(`${name} is not a property that exists.`);
   if (!(col.type in body)) fail(`${name} is expected to be ${col.type}.`);
-  return [name, { id: col.id, type: col.type, [col.type]: stored(col, col.type, body[col.type]) }];
+  return [key, { id: col.id, type: col.type, [col.type]: stored(col, col.type, body[col.type]) }];
 }));
 const stripFrontmatter = (s) => s.replace(/^---\n[\s\S]*?\n?---\n/, "");
 
@@ -83,7 +85,7 @@ if (group === "pages" && cmd === "get") {
   console.log(JSON.stringify({ object: "page_markdown", id, markdown: p.markdown, truncated: false, unknown_block_ids: [] }));
 } else if (group === "api" && /^v1\/pages\/[^/]+$/.test(cmd) && flag("-X") === "PATCH") {
   const id = cmd.split("/")[2], s = Object.values(state.sources ?? {}).find((x) => x.rows.some((r) => r.id === id));
-  const title = JSON.parse(flag("-d")).properties?.title?.title;
+  const body = JSON.parse(flag("-d")), title = body.properties?.title?.title;
   if (!s && state.pages[id] && title) {
     state.pages[id].title = title.map((r) => r.text.content).join("");
     save();
@@ -91,7 +93,7 @@ if (group === "pages" && cmd === "get") {
     process.exit(0);
   }
   if (!s) fail(`Could not find page with ID: ${id}`);
-  Object.assign(s.rows.find((r) => r.id === id).properties, fill(s, JSON.parse(flag("-d")).properties));
+  Object.assign(s.rows.find((r) => r.id === id).properties, fill(s, body.properties));
   save();
   console.log(JSON.stringify({ object: "page", id }));
 } else if (group === "api" && cmd === "v1/pages" && !rest.includes("-X")) {

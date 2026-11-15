@@ -540,6 +540,15 @@ test("setProperty rejects an invalid value without running ntn or touching Notio
   assert.equal(readFileSync(stateFile, "utf8"), before);
 });
 
+test("renaming through the title property id works for a page and a database row", async () => {
+  const title = { name: "title", type: "title" };
+  reset({ ...dbState(), pages: { [ID]: { title: "Old", markdown: "x" } } });
+  await api.setProperty(ID, title, "New name");
+  assert.equal((await api.get(ID)).title, "New name");
+  await api.setProperty(ROW, title, "Row name");
+  assert.deepEqual(await text("Name"), { text: "Row name" });
+});
+
 test("setProperty writes each type and the next read shows it", async () => {
   reset(dbState());
   const cols = Object.fromEntries((await api.source(DB)).columns.map((c) => [c.name, c]));

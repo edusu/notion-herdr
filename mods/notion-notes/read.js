@@ -80,7 +80,9 @@ export const readMethods = {
     state.on("change", (_e, cx) => {
       const ed = this.editing;
       if (ed?.state !== state) return;
-      const value = state.value(), hit = slashQuery(ed.last, value);
+      const value = state.value();
+      if (ed.block.after && value && !this.addLine()) return cx.notify();
+      const hit = slashQuery(ed.last, value);
       ed.last = value;
       ed.slash = hit && { ...hit, at: 0 };
       cx.notify();
@@ -90,6 +92,15 @@ export const readMethods = {
     this.editing = { block, state, ...parts, stale: false, last: parts.text, slash: null };
     state.focus();
     if (atEnd) state.set_selected_range({ start: parts.text.length, end: parts.text.length });
+  },
+
+  // Puts the line a click below the note opened into the note, on the first key typed in it.
+  addLine() {
+    const ed = this.editing;
+    if (!this.apply(insertAfter(this.editor.value(), ed.block.after, ""))) return false;
+    ed.block = this.blocks().find((b) => b.from === ed.block.from);
+    ed.added = true;
+    return true;
   },
 
   closeEdit(cx) {
@@ -189,6 +200,7 @@ export const readMethods = {
   backspace(cx) {
     const { block, state, prefix } = this.editing;
     if (state.value()) return;
+    if (block.after) return this.endEdit(cx);
     if (LEAVES_TYPE.has(block.type)) return this.swap(retype(prefix, "paragraph"), cx);
     const prev = nextEditable(this.blocks(), block.from, -1);
     if (!this.apply(replaceBlock(this.editor.value(), block, null))) return;
@@ -215,16 +227,16 @@ export const readMethods = {
     cx.notify();
   },
 
-  // A click below the last block writes at the end of the note: in its trailing empty line, or in one added for it.
+  // A click below the last block writes at the end of the note: in its trailing empty line, or in a new one
+  // that addLine puts in the note once something is typed, so a click alone changes nothing.
   writeAtEnd(e, cx) {
     if (e.modifiers?.platform || this.meta.readonly || !this.endEdit(cx)) return;
-    const text = this.editor.value(), added = this.blocks().at(-1)?.type !== "blank";
-    if (added) this.setText(`${text}\n`);
     const last = this.blocks().at(-1);
-    // A last tag that takes the lines below it keeps the new line: the text is left as it was.
-    if (last.type !== "blank") return this.setText(text);
-    this.startEdit(last, cx);
-    if (this.editing) this.editing.added = added;
+    if (last.type === "blank") this.startEdit(last, cx);
+    // A last tag that takes the lines below it (a code fence, a table) has no line to write in.
+    else if (parseBlocks(`${this.editor.value()}\n`).at(-1).type === "blank") {
+      this.startEdit({ type: "blank", from: last.to + 1, to: last.to + 1, raw: "", after: last }, cx);
+    }
     cx.notify();
   },
 
@@ -495,11 +507,12 @@ export const readMethods = {
     const blocks = this.blocks(), ed = this.editing;
     const rows = blocks.map((b) => row(b));
     // The open block no longer matches any block of the note: keep its draft on screen with the notice.
-    if (ed && !blocks.some((b) => sameBlock(b, ed.block))) { ed.stale = true; rows.push(h_flex().flex_none().child(this.field(t, 13))); }
+    // A line not yet added (writeAtEnd) is drawn there as well, and is only stale if adding it failed.
+    if (ed && !blocks.some((b) => sameBlock(b, ed.block))) { ed.stale ||= !ed.block.after; rows.push(h_flex().flex_none().child(this.field(t, 13))); }
     if (!ro) {
       rows.push(div().id("nn-tail").flex_grow(1).min_h(64).cursor_pointer().text_color(t.dim)
         .on_click((e, cx) => this.writeAtEnd(e, cx))
-        .when(!ed && this.editor.value() === "", (el) => el.child("Click to write")));
+        .when(!ed && this.parsedText === "", (el) => el.child("Click to write")));
     }
     return v_flex().id("nn-read").flex_1().min_h(0).overflow_y_scrollbar().px(14).py(10).gap(4)
       .children(rows);

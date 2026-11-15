@@ -39,31 +39,33 @@ const fetchedAt = new Map();
 let swept = false;
 let listed = Promise.resolve();
 const sweeping = new Map();
-// Compact ids of pages renamed in this app session: a view whose note links one reads Notion again,
+// Compact id -> rev of pages renamed in this app session: a view whose note links one reads Notion again,
 // since the parent's markdown now carries the new title.
-const renamed = new Set();
+const renamed = new Map();
 let renamedRev = 0;
 // notion:// opens the desktop app; once `open` fails for it, https is used for the session.
 let viaApp = true;
 
 // Herdr tells a layout block nothing when it is shown, and a hidden copy gets no renders,
 // but layout() carries every node's `hidden` and each stack's `active` child.
+const isPanel = (node) => node.content?.mod === NAME && !node.content.props?.page;
 const shownIn = (node) => {
   if (!node || node.hidden) return false;
-  if (node.content?.mod === NAME && !node.content.props?.page) return true;
+  if (isPanel(node)) return true;
   const kids = node.children ?? [];
   return (node.type === "stack" ? [kids.find((c) => c.id === node.active) ?? kids[0]] : kids).some(shownIn);
 };
 
+// The layout nodes from the root down to the panel copy, or null when the layout has none.
+const panelPath = (node = layout(), trail = []) => {
+  if (!node) return null;
+  if (isPanel(node)) return [...trail, node];
+  for (const c of node.children ?? []) { const p = panelPath(c, [...trail, node]); if (p) return p; }
+  return null;
+};
+
 // Shows the panel copy: unhides every node on its path and picks it in each stack.
-const showPanel = () => {
-  const find = (node, trail) => {
-    if (!node) return null;
-    if (node.content?.mod === NAME && !node.content.props?.page) return [...trail, node];
-    for (const c of node.children ?? []) { const p = find(c, [...trail, node]); if (p) return p; }
-    return null;
-  };
-  const path = find(layout(), []) ?? [];
+const showPanel = (path) => {
   path.forEach((n, i) => {
     if (n.hidden) run("layout.show", { id: n.id });
     if (n.type === "stack" && path[i + 1]) run("layout.select", { stack: n.id, child: path[i + 1].id });
@@ -143,7 +145,7 @@ class NotionNotes extends View {
   }
 
   canUpload(m) {
-    return m?.pending && !m.uploading && !m.held && !m.readonly && !this.conflict && !this.creating;
+    return m?.pending && !m.uploading && !m.held && !m.readonly && !this.conflict && !this.creating && !this.moving;
   }
 
   // Local saves every 0.8 s, like tab-notes; an upload once typing has stopped for 3 s.
@@ -158,9 +160,11 @@ class NotionNotes extends View {
     // A read-only second view takes the note over once the view that edited it is gone.
     if (this.meta?.elsewhere && !owners.has(this.page)) this.open(this.page, cx);
     if (this.renamedSeen !== renamedRev) {
-      this.renamedSeen = renamedRev;
       const text = this.editor?.value() ?? "";
-      if ([...renamed].some((hex) => text.includes(hex))) { fetchedAt.delete(this.page); this.refresh(cx); }
+      const hit = [...renamed].some(([hex, rev]) => rev > this.renamedSeen && text.includes(hex));
+      if (hit) fetchedAt.delete(this.page);
+      // A refresh held back by local edits leaves the rename to a later tick.
+      if (!hit || this.refresh(cx)) this.renamedSeen = renamedRev;
     }
     if (this.reading && this.sourcesSeen !== sourcesChanged()) { this.sourcesSeen = sourcesChanged(); cx.notify(); }
     if (this.dirty && this.editor) this.save(cx);
@@ -258,20 +262,29 @@ class NotionNotes extends View {
   // The panel opens it read-only until this pane's close() has saved and released it.
   toPanel(cx) {
     if (!this.endEdit(cx)) return;
+    if (!panelPath()) { this.errors.panel = "No side panel in this layout"; cx.notify(); return; }
     const id = this.page;
+    if (this.dirty) this.save(cx);
+    // No new upload starts here: the panel takes the note over, and two copies uploading would conflict.
+    this.moving = true;
     cx.spawn(async (cx) => {
       try {
+        // Uploads, renames and saves already queued land before the panel reads the note.
+        await this.net(() => {});
+        await this.disk(() => {});
         await mapSpace(id);
-        showPanel();
+        showPanel(panelPath() ?? []);
         // A mod pane is not told its own id. The pane is closed by explicit id, so a terminal pane is never hit.
         // shortcut: with several note panes in the tab the focused one is taken, which may not be this one; fine while one is the norm.
         const tab = focused()?.tab, mine = panes().filter((p) => p.mod === NAME && p.tab === tab);
         const own = mine.length === 1 ? mine[0] : mine.find((p) => p.focused);
-        if (own) run("pane.close", { pane: own.pane });
+        if (own) return run("pane.close", { pane: own.pane });
+        this.errors.panel = "Close this pane to edit the note in the panel";
       } catch (e) {
         this.errors.panel = `Cannot move to the panel: ${e.message}`;
-        cx.notify();
       }
+      this.moving = false;
+      cx.notify();
     });
   }
 
@@ -317,9 +330,12 @@ class NotionNotes extends View {
     cx.spawn(async (cx) => {
       try {
         // The title property's id is "title" in every page, database rows included.
-        await this.net(() => this.api.setProperty(id, { name: "title", type: "title" }, title));
-        renamed.add(id.replace(/-/g, "")); renamedRev++;
-        await this.disk(() => putMeta(id, m));
+        // The meta is written inside the upload queue, so a move to the panel waits for it.
+        await this.net(async () => {
+          await this.api.setProperty(id, { name: "title", type: "title" }, title);
+          renamed.set(id.replace(/-/g, ""), ++renamedRev);
+          await this.disk(() => putMeta(id, m));
+        });
         if (this.meta === m) this.errors.title = null;
       } catch (e) {
         if (m.title === title) m.title = before;
@@ -373,11 +389,11 @@ class NotionNotes extends View {
   }
 
   // Reads the page again when it comes into view, unless local edits are waiting (the upload
-  // and its conflict check handle those). A failure keeps the text and only shows the error.
+  // and its conflict check handle those). A failure keeps the text and only shows the error. True when a read started.
   refresh(cx) {
     const id = this.page, m = this.meta;
     if (!m || m.elsewhere || m.pending || m.uploading || this.dirty || this.conflict || this.editing || this.creating) return;
-    const started = Date.now();
+    const started = Date.now(), title = m.title;
     if (started - (fetchedAt.get(id) ?? 0) < REFRESH_EVERY) return;
     fetchedAt.set(id, started);
     cx.spawn(async (cx) => {
@@ -386,13 +402,15 @@ class NotionNotes extends View {
         if (this.meta !== m) return;
         const decision = refreshDecision({ typed: this.changedAt > started, remote: p.markdown, base: m.base });
         this.errors.refresh = null;
-        if (decision === "same" && (m.url !== p.url || m.title !== p.title)) {
-          Object.assign(m, { url: p.url, title: p.title });
+        // A rename made while the read was in flight is newer than the title it returns.
+        const name = m.title === title ? p.title : m.title;
+        if (decision === "same" && (m.url !== p.url || m.title !== name)) {
+          Object.assign(m, { url: p.url, title: name });
           await this.disk(() => putMeta(id, m));
         }
         // A block opened while the read was in flight: its text stays for the next refresh.
         if (decision !== "apply" || this.editing || this.creating) return;
-        Object.assign(m, fromPage(p));
+        Object.assign(m, fromPage(p), { title: name });
         m.readonly = m.partial;
         this.editor.release();
         this.editor = this.editorFor(m);
@@ -405,6 +423,7 @@ class NotionNotes extends View {
         cx.notify();
       }
     });
+    return true;
   }
 
   open(id, cx, fresh = false) {
@@ -473,12 +492,16 @@ class NotionNotes extends View {
 
   async close() {
     this.endEdit(undefined, true);
-    this.release();
-    if (!this.dirty || !this.editor || !this.meta) return;
-    // An upload does not fit in close's 250 ms: keep it pending for the next start.
-    const id = this.page, m = this.meta, text = this.editor.value();
-    changed(m);
-    await this.disk(() => persist(id, m, text));
+    // Released after the save: a view waiting for the note reads it from disk once it is free.
+    try {
+      if (!this.dirty || !this.editor || !this.meta) return;
+      // An upload does not fit in close's 250 ms: keep it pending for the next start.
+      const id = this.page, m = this.meta, text = this.editor.value();
+      changed(m);
+      await this.disk(() => persist(id, m, text));
+    } finally {
+      this.release();
+    }
   }
 
   statusText(m) {
@@ -524,7 +547,8 @@ class NotionNotes extends View {
         .child(h_flex().id("nn-title").flex_1().min_w(0).when(!pane, (el) => el.justify_end()).cursor_pointer()
           .when(this.mode === "panel", (el) => el.on_click(() => this.openPicker()))
           .child(div().min_w(0).truncate().text_size(pane ? 13 : 12).text_color(pane ? t.foreground : t.muted).hover((s) => s.text_color(t.foreground))
-            .child(m?.title ?? (this.mode === "panel" ? "Choose note" : ""))))
+            // A pane shows the title only in the editable row below; the panel keeps it here as the picker's button.
+            .child(pane && this.editor ? "" : m?.title ?? (this.mode === "panel" ? "Choose note" : ""))))
         .when(Boolean(status), (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(status)))
         .when(Boolean(this.editor), (el) => el
           .when(pane, (el) => el.child(button("nn-to-panel", "To panel", false, (cx) => this.toPanel(cx))))
