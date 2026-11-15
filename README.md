@@ -28,6 +28,26 @@ A Herdr Desktop mod that opens a Notion page as an editable markdown note, throu
 4. Optional key: `"cmd-shift-n": "mod.open:notion-notes"` in `keys.json` opens the picker
    (a copy opened with `mod.open` is the picker), whether or not the panel is shown.
 
+## Read mode
+
+The header's **Read** / **Edit** button switches the note (the choice is remembered) between
+**Read**, a view drawn block by block, and **Edit**, the plain markdown text and the only place to
+change anything but to-dos. What you can click in Read:
+
+- **To-dos**: the checkbox marks or unmarks the item in the note, and the edit uploads like any
+  other (see Sync rules). Done items show struck through. Not clickable in read-only notes, nor
+  for to-dos nested inside callouts, toggles or other tags.
+- **Subpages**: click opens the page in a pane to the right, ⌘-click opens it in Notion.
+- **Inline databases**: a table of the first 50 rows, title column first and then the schema's order
+  (the API does not give a view's column order, so filters, sorting and hidden columns of the
+  Notion view are not applied). Click a row to open it in a pane to the right, ⌘-click for Notion.
+  `status` and `select` values show as tags in theme colours. With more rows the footer reads
+  "Showing first 50 · Open in Notion". A linked database (no data source of its own) shows as a link
+  only. If the rows cannot be read the block shows one error line and the rest of the page still renders.
+
+Callouts, toggles/details, columns, simple tables and other tags are not drawn specially: they show
+as the plain markdown fallback, with child pages and databases inside them as links.
+
 ## Appending from an agent
 
 `bin/notion-note-append` (node, no dependencies) appends markdown from stdin to the note
@@ -66,7 +86,9 @@ Only `ntn`, with ids and titles passed as separate arguments, never inside a she
 - `ntn pages edit <id>` through `sh -c '"$1" pages edit "$2" < "$3"'` (exec has no stdin).
   It never passes `--allow-deleting-content`, so child pages and databases are kept;
 - `ntn pages create --json --content <frontmatter title> [--parent <ref>]`;
-- `ntn datasources query <id> --limit 50 --json` and `ntn api v1/search -d <json>`.
+- `ntn datasources query <id> --limit 50 --json` for the picker's list and for an inline
+  database's rows in Read mode, `ntn api v1/data_sources/<id>` for that database's columns, and
+  `ntn api v1/search -d <json>`.
 - once per app session, when the picker first opens, `ntn api v1/search` filtered to data
   sources, to name database parents in picker rows (failure is silent; rows show without it).
 
@@ -111,6 +133,9 @@ would reload the mod):
 - Closing Herdr leaves unsent edits marked `pending`. The first panel copy of the next app
   session uploads every pending note, one at a time and with the same conflict check; a
   conflict or failure stays pending, without an error until that note is opened.
+- Marking a to-do in Read mode uploads the whole page through `ntn pages edit`, like any edit. If
+  Notion recreates blocks on upload, comments attached to blocks could be lost; this has not been
+  tested, so try it on a scratch page with a block comment before using real pages.
 - A note starting with `---` is uploaded behind an empty frontmatter block, because
   `ntn pages edit` strips a leading frontmatter.
 

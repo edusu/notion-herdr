@@ -68,8 +68,9 @@ export function pageUrl(id, url, app) {
 }
 
 /**
- * The note for the read view: Notion's own tags for empty lines, child pages and databases
- * become plain markdown, each child on its own paragraph as Notion shows it. Display only: uploads keep the tags so children are not deleted.
+ * Fallback for blocks the read view does not draw itself (callouts, toggles, columns...): Notion's
+ * tags for empty lines, child pages and databases inside them become plain markdown, each child on
+ * its own paragraph as Notion shows it. Display only: uploads keep the tags so children are not deleted.
  */
 export function readable(text) {
   return text
