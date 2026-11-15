@@ -1,0 +1,44 @@
+#!/usr/bin/env node
+// Appends markdown from stdin to the Notion note mapped to a folder by the notion-notes mod.
+// Usage: notion-note-append [--folder <dir>] [--page <id>] < text.md
+import { execFile } from "node:child_process";
+import { readFileSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import { resolve, join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const { client, mappedPage, canonicalId, DEFAULT_NTN } = await import(join(here, "../mods/notion-notes/notion.js"));
+
+const fail = (msg) => { console.error(`notion-note-append: ${msg}`); process.exit(1); };
+const appHome = process.env.HERDR_APP_HOME || join(homedir(), ".config/herdr-app");
+const readJson = (path) => { try { return JSON.parse(readFileSync(path, "utf8")); } catch { return null; } };
+
+// Same shape as Herdr's exec; stdin is closed so ntn never waits on it.
+const exec = (cmd, args) => new Promise((ok, no) => {
+  const child = execFile(cmd, args, { maxBuffer: 8 << 20, timeout: 60000 }, (err, stdout, stderr) =>
+    err && typeof err.code !== "number" ? no(err) : ok({ code: err ? err.code : 0, stdout, stderr }));
+  child.stdin.end();
+});
+
+let opts;
+try { opts = parseArgs({ options: { folder: { type: "string" }, page: { type: "string" } } }).values; }
+catch (e) { fail(e.message); }
+// Space folders may be symlinks: $PWD keeps the path as the shell (and Herdr) sees it.
+const real = (p) => { try { return realpathSync(p); } catch { return null; } };
+const cwd = process.env.PWD && real(process.env.PWD) === real(process.cwd()) ? process.env.PWD : process.cwd();
+const folder = resolve(opts.folder ?? cwd);
+const mapped = opts.page ?? mappedPage(readJson(join(appHome, "notion-notes/map.json")) ?? {}, folder, homedir());
+if (!mapped) fail(`no note is mapped to ${folder} or its parents`);
+const page = canonicalId(mapped);
+if (!page) fail(`not a Notion page id: ${mapped}`);
+// Appending under unsent Herdr edits would force a choice between them and the append.
+if (readJson(join(appHome, "notion-notes", `${page}.json`))?.pending) fail("the note has edits in Herdr not yet uploaded; try again once it shows Synced");
+const text = readFileSync(0, "utf8");
+if (!text.trim()) fail("nothing to append: stdin is empty");
+
+const ntn = readJson(join(appHome, "mods/notion-notes/mod.json"))?.settings?.ntn || DEFAULT_NTN;
+try { await client(exec, ntn).append(page, text); }
+catch (e) { fail(e.message); }
+console.log(page);

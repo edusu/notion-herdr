@@ -1,0 +1,10 @@
+{
+  "place": "none",
+  "title": "Notion notes",
+  "overlay": { "kind": "dialog", "width": 620 },
+  "settings": {
+    "parents": [],
+    "datasource": "",
+    "ntn": "ntn"
+  }
+}
