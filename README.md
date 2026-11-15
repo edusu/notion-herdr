@@ -30,14 +30,14 @@ A Herdr Desktop mod that opens a Notion page as an editable markdown note, throu
 
 ## Read mode
 
-The header's **Read** / **Edit** button switches the note (the choice is remembered) between
-**Read**, a view drawn block by block, and **Edit**, the plain markdown text. Read changes the
-note in the ways below; everything else needs Edit. Read-only notes cannot be changed in Read.
+Notes open in **Read**, a view drawn block by block. The header's **Markdown** / **Read** button
+switches to **Markdown**, the note's plain markdown text, and back (the choice is remembered). Read
+changes the note in the ways below; everything else needs Markdown. Read-only notes cannot be changed in Read.
 
 - **Text blocks**: click a paragraph, heading, bullet, numbered item, to-do, one-line quote or empty
   line to edit it in a one-line field that holds only its text (the `#`, `-`, `1.` or `> ` stays
   outside the field). Any click on the block opens the field, including one on a link in its text
-  or a drag to select it; ⌘-click is left alone, and Edit follows links. The field saves when it loses focus or you press `Esc`;
+  or a drag to select it; ⌘-click is left alone; change a link's URL in Markdown. The field saves when it loses focus or you press `Esc`;
   the edit then uploads like any other (see Sync rules).
   - `Enter` saves and starts a new block below, continuing a bullet, numbered or to-do list; on an
     empty list item it turns the item into a paragraph.
@@ -82,7 +82,7 @@ note in the ways below; everything else needs Edit. Read-only notes cannot be ch
   - A cell is drawn dimmed until Notion confirms the write, then the table is read again; an error
     shows under its row.
 
-Still needs Edit: code blocks, multi-line quotes, dividers, tables, the text inside callouts and
+Still needs Markdown: code blocks, multi-line quotes, dividers, tables, the text inside callouts and
 toggles, other tags (columns...) and selecting text across blocks. Columns, simple tables and
 other tags show as the plain markdown fallback, with child pages and databases inside them as links.
 

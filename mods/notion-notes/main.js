@@ -63,7 +63,7 @@ class NotionNotes extends View {
     this.disk = serial(); this.net = serial();
     this.page = null; this.meta = null; this.editor = null; this.dirty = false;
     this.conflict = null; this.creating = null; this.errors = {}; this.gen = 0; this.changedAt = 0;
-    try { this.reading = localStorage.getItem("view") === "read"; } catch { this.reading = false; }
+    try { this.reading = localStorage.getItem("view") !== "edit"; } catch { this.reading = true; }
     this.setup.catch((e) => { this.errors.settings = `Settings in mod.json: ${e.message}`; cx.notify(); });
     cx.timer.every(800, (cx) => this.tick(cx));
     if (this.mode === "pane") {
@@ -427,7 +427,7 @@ class NotionNotes extends View {
             .child(m?.title ?? (this.mode === "panel" ? "Choose note" : ""))))
         .when(Boolean(status), (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(status)))
         .when(Boolean(this.editor), (el) => el
-          .child(button("nn-view", this.reading ? "Edit" : "Read", false, (cx) => this.toggleView(cx)))
+          .child(button("nn-view", this.reading ? "Markdown" : "Read", false, (cx) => this.toggleView(cx)))
           .child(button("nn-notion", svg(`mods/${NAME}/external-link.svg`).size(14).text_color(t.foreground), false, (cx) => this.openInNotion(cx)).px(6))))
       .when(Boolean(error), (el) => el.child(div().px(14).py(6).text_size(11).text_color(t.ansi1).child(error)))
       .when(Boolean(this.conflict), (el) => el.child(h_flex().px(14).py(8).gap(8).items_center().bg(t.raised).border_b(1).border_color(t.border)
