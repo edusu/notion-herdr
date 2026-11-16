@@ -550,6 +550,9 @@ class NotionNotes extends View {
             // A pane shows the title only in the editable row below; the panel keeps it here as the picker's button.
             .child(pane && this.editor ? "" : m?.title ?? (this.mode === "panel" ? "Choose note" : ""))))
         .when(Boolean(status), (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(status)))
+        // Skips the 30 s throttle; refresh() still declines while local edits wait to upload.
+        .when(Boolean(this.editor), (el) => el.child(button("nn-refresh", svg(`mods/${NAME}/refresh.svg`).size(14).text_color(t.foreground), false,
+          (cx) => { fetchedAt.delete(this.page); this.refresh(cx); }).px(6)))
         .when(Boolean(this.editor), (el) => el
           .when(pane, (el) => el.child(button("nn-to-panel", "To panel", false, (cx) => this.toPanel(cx))))
           .child(button("nn-view", this.reading ? "Markdown" : "Read", false, (cx) => this.toggleView(cx)))

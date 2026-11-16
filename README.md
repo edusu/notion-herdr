@@ -173,7 +173,7 @@ would reload the mod):
   minute.
 - A note opens from its local copy, then is read again from Notion when it is opened and
   every 30 s while it is shown, so edits made on another device arrive: only without unsent
-  edits or an open block. A Notion change replaces the text unless you typed
+  edits or an open block. The circular-arrows button next to the status reads it at once. A Notion change replaces the text unless you typed
   meanwhile; a failed read only shows an error line.
 - Pages Notion returns as truncated or with unsupported blocks, and notes over 340,000
   characters (Herdr reads at most 1 MiB per file), open read-only.
@@ -208,4 +208,4 @@ against `tests/fake-ntn.mjs`.
 
 The save chain follows `tab-notes` from
 [ozcberkay/herdr-coban](https://github.com/ozcberkay/herdr-coban), Apache-2.0
-(`LICENSE-tab-notes`). `notes.svg` and `external-link.svg` are Lucide's `file-text` and `external-link`, ISC (`mods/notion-notes/LICENSE-lucide`).
+(`LICENSE-tab-notes`). `notes.svg`, `external-link.svg` and `refresh.svg` are Lucide's `file-text`, `external-link` and `refresh-cw`, ISC (`mods/notion-notes/LICENSE-lucide`).
