@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { client, upload, serial, titleOf, refreshDecision, pages, ago, pageUrl, readable, mappedPage, sourceNames, canonicalId, propertyValue } from "../mods/notion-notes/notion.js";
+import { ui, setSizes, TEXT, BOX, ICON } from "../mods/notion-notes/ui.js";
 import { parseBlocks, children, todos, toggleTodo, cell, replaceBlock, insertAfter, retype, continuation, slashQuery, commands, editParts, nextEditable, appendedPage, editableCell } from "../mods/notion-notes/blocks.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -841,4 +842,19 @@ test("nextEditable finds the closest editable block before or after a line", () 
   assert.equal(nextEditable(blocks, 7, 1), undefined);
   assert.equal(at(nextEditable(blocks, 1, 1)), 4);
   assert.equal(nextEditable([], 0, 1), undefined);
+});
+
+test("font_size sets text and grows text-holding sizes; scale sets icons and heights, not text", () => {
+  const schema = JSON.parse(readFileSync(join(here, "../mods/notion-notes/mod.schema.json"), "utf8")).properties.settings.properties;
+  setSizes(schema.scale.default, schema.font_size.default);
+  assert.deepEqual(ui, { text: TEXT, size: { ...BOX, ...ICON } });
+  assert.deepEqual([ui.text.title, ui.text.body, ui.size.header, ui.size.row, ui.size.icon], [22, 13, 42, 26, 14]);
+  setSizes(1, 16.25);
+  assert.deepEqual([ui.text.title, ui.text.body, ui.size.header, ui.size.row, ui.size.icon], [27.5, 16.25, 53, 33, 14]);
+  setSizes(1.25, 13);
+  assert.deepEqual([ui.text.title, ui.text.body, ui.size.header, ui.size.row, ui.size.icon], [22, 13, 53, 33, 18]);
+  assert.ok(Object.values(ui.size).every(Number.isInteger));
+  setSizes(9, "big");
+  assert.deepEqual([ui.text.body, ui.size.icon], [13, 22]);
+  setSizes(1, 13);
 });

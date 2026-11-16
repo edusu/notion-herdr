@@ -8,6 +8,7 @@ import { exec, theme, settings, props, run, shared, layout, panes, focused, read
 import { client, upload, serial, refreshDecision, pageUrl, validId } from "./notion.js";
 import { replaceBlock, appendedPage } from "./blocks.js";
 import { pickerMethods } from "./picker.js";
+import { ui, setSizes } from "./ui.js";
 import { readMethods, sourcesChanged, release } from "./read.js";
 import { NAME, MAP_REV, REFRESH_EVERY, dir, mapPath, cachePath, metaPath, uploadPath, spaceKey, spacePage, readJson, put, loadSettings, mapSpace } from "./store.js";
 import * as fs from "fs/promises";
@@ -76,7 +77,7 @@ class NotionNotes extends View {
   init(_props, cx) {
     const p = props() ?? {};
     this.mode = p.page ? "pane" : p.overlay ? "picker" : "panel";
-    this.setup = loadSettings().then((cfg) => { this.cfg = cfg; this.api = client(exec, cfg.ntn); });
+    this.setup = loadSettings().then((cfg) => { this.cfg = cfg; this.api = client(exec, cfg.ntn); setSizes(cfg.scale, cfg.font_size); cx.notify(); });
     if (this.mode === "picker") return this.initPicker(cx);
 
     // Local files go through `disk` and Notion calls through `net`, so a slow upload never
@@ -291,11 +292,11 @@ class NotionNotes extends View {
 
   // The page title above the note, in both views; a click edits it unless the note is read-only.
   renderTitle(t) {
-    const m = this.meta, row = h_flex().id("nn-page-title").flex_none().px(14).pt(12).pb(2).min_w(0).text_size(22).font_semibold();
+    const m = this.meta, row = h_flex().id("nn-page-title").flex_none().px(14).pt(12).pb(2).min_w(0).text_size(ui.text.title).font_semibold();
     if (this.titleEdit) {
       return row.child(h_flex().flex_1().min_w(0).track_focus(this.fieldFocus)
         .on_key_down((e, cx) => { if (e.keystroke === "escape") { this.closeTitle(cx); cx.notify(); } })
-        .child(Input.new(this.titleEdit).flex_1().text_size(22).text_color(t.foreground)));
+        .child(Input.new(this.titleEdit).flex_1().text_size(ui.text.title).text_color(t.foreground)));
     }
     return row.when(!m.readonly, (el) => el.cursor_pointer().on_click((_e, cx) => this.editTitle(cx)))
       .child(div().min_w(0).truncate().text_color(m.title ? t.foreground : t.dim).child(m.title || "Untitled"));
@@ -379,7 +380,7 @@ class NotionNotes extends View {
 
   editorFor(m) {
     const editor = EditorState.new({ language: "md", value: m.savedText, line_numbers: false, folding: false, soft_wrap: true,
-      readonly: m.readonly, font_family: settings().font_family, font_size: 13 });
+      readonly: m.readonly, font_family: settings().font_family, font_size: ui.text.body });
     editor.on("change", () => this.edited(m));
     return editor;
   }
@@ -528,9 +529,9 @@ class NotionNotes extends View {
     const t = theme(), m = this.meta, pane = this.mode === "pane";
     const error = Object.values(this.errors).find(Boolean);
     const status = this.statusText(m);
-    const button = (id, label, primary, action) => h_flex().id(id).h(26).px(10).items_center().rounded(6).flex_none()
+    const button = (id, label, primary, action) => h_flex().id(id).h(ui.size.button).px(10).items_center().rounded(6).flex_none()
       .border_1().border_color(primary ? t.solid : t.input).bg(primary ? t.solid : t.raised)
-      .text_color(primary ? t.solid_foreground : t.foreground).text_size(12).cursor_pointer()
+      .text_color(primary ? t.solid_foreground : t.foreground).text_size(ui.text.small).cursor_pointer()
       .hover((s) => s.opacity(0.88)).on_click((_e, cx) => action(cx)).child(label);
     // The editor state stays alive while reading, so cursor and undo survive the switch.
     const body = this.reading && this.editor ? this.renderRead(cx)
@@ -539,27 +540,27 @@ class NotionNotes extends View {
           .child(div().text_color(t.dim).child("No note for this space"))
           .child(button("nn-choose", "Choose note", true, () => this.openPicker()))
       : div().p(12).text_color(t.dim).child(error || !this.page ? "" : "Loading note…");
-    return v_flex().id("notion-notes").size_full().min_h(0).overflow_hidden().bg(t.background).text_color(t.foreground).text_size(13)
+    return v_flex().id("notion-notes").size_full().min_h(0).overflow_hidden().bg(t.background).text_color(t.foreground).text_size(ui.text.body)
       // A pane already has Herdr's header (it shows the mod's name and no mod can change it), so
       // the pane drops the "Notes" label and keeps one compact row: page title, status, controls.
-      .child(h_flex().h(pane ? 34 : 42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
+      .child(h_flex().h(pane ? ui.size.paneHeader : ui.size.header).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
         .when(!pane, (el) => el.child(div().flex_none().font_semibold().child("Notes")))
         .child(h_flex().id("nn-title").flex_1().min_w(0).when(!pane, (el) => el.justify_end()).cursor_pointer()
           .when(this.mode === "panel", (el) => el.on_click(() => this.openPicker()))
-          .child(div().min_w(0).truncate().text_size(pane ? 13 : 12).text_color(pane ? t.foreground : t.muted).hover((s) => s.text_color(t.foreground))
+          .child(div().min_w(0).truncate().text_size(pane ? ui.text.body : ui.text.small).text_color(pane ? t.foreground : t.muted).hover((s) => s.text_color(t.foreground))
             // A pane shows the title only in the editable row below; the panel keeps it here as the picker's button.
             .child(pane && this.editor ? "" : m?.title ?? (this.mode === "panel" ? "Choose note" : ""))))
-        .when(Boolean(status), (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(status)))
+        .when(Boolean(status), (el) => el.child(div().flex_none().text_size(ui.text.tiny).text_color(t.dim).child(status)))
         // Skips the 30 s throttle; refresh() still declines while local edits wait to upload.
-        .when(Boolean(this.editor), (el) => el.child(button("nn-refresh", svg(`mods/${NAME}/refresh.svg`).size(14).text_color(t.foreground), false,
+        .when(Boolean(this.editor), (el) => el.child(button("nn-refresh", svg(`mods/${NAME}/refresh.svg`).size(ui.size.icon).text_color(t.foreground), false,
           (cx) => { fetchedAt.delete(this.page); this.refresh(cx); }).px(6)))
         .when(Boolean(this.editor), (el) => el
           .when(pane, (el) => el.child(button("nn-to-panel", "To panel", false, (cx) => this.toPanel(cx))))
           .child(button("nn-view", this.reading ? "Markdown" : "Read", false, (cx) => this.toggleView(cx)))
-          .child(button("nn-notion", svg(`mods/${NAME}/external-link.svg`).size(14).text_color(t.foreground), false, (cx) => this.openInNotion(cx)).px(6))))
-      .when(Boolean(error), (el) => el.child(div().px(14).py(6).text_size(11).text_color(t.ansi1).child(error)))
+          .child(button("nn-notion", svg(`mods/${NAME}/external-link.svg`).size(ui.size.icon).text_color(t.foreground), false, (cx) => this.openInNotion(cx)).px(6))))
+      .when(Boolean(error), (el) => el.child(div().px(14).py(6).text_size(ui.text.tiny).text_color(t.ansi1).child(error)))
       .when(Boolean(this.conflict), (el) => el.child(h_flex().px(14).py(8).gap(8).items_center().bg(t.raised).border_b(1).border_color(t.border)
-        .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.blocked).child("Changed in Notion"))
+        .child(div().flex_1().min_w(0).truncate().text_size(ui.text.small).text_color(t.blocked).child("Changed in Notion"))
         .child(button("nn-reload", "Reload", false, (cx) => this.reload(cx)))
         .child(button("nn-overwrite", "Overwrite", true, (cx) => this.overwrite(cx)))))
       .when(Boolean(this.editor), (el) => el.child(this.renderTitle(t)))

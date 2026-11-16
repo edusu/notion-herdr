@@ -5,11 +5,11 @@ import { v_flex, h_flex, InputState, Input, ScrollHandle } from "gpui-base";
 import { theme, props, run, closeOverlay } from "herdr";
 import { NAME, mapPath, spacePage, readJson, mapSpace } from "./store.js";
 import { ago } from "./notion.js";
+import { ui } from "./ui.js";
 
 const DEBOUNCE = 300;
 // Data-source names for row details, looked up once per app session (module scope).
 let sources = null;
-const ROW = 32;
 const MAX_ROWS = 11;
 
 export const pickerMethods = {
@@ -103,19 +103,19 @@ export const pickerMethods = {
       const mapped = r.kind === "page" && r.id === this.current;
       const parent = r.kind === "page" && (r.parent ?? r.parentIds.map((id) => sources?.get(id)).find(Boolean));
       const details = r.kind === "page" ? [parent, r.edited && ago(r.edited)].filter(Boolean).join(" · ") : "";
-      return h_flex().id(`nn-row-${i}`).flex_none().h(ROW).px(10).gap(8).items_center().rounded(7).cursor_pointer()
+      return h_flex().id(`nn-row-${i}`).flex_none().h(ui.size.pickerRow).px(10).gap(8).items_center().rounded(7).cursor_pointer()
         .when(i === this.at, (el) => el.bg(t.hover))
         .hover((s) => s.bg(t.hover))
         .on_click((e, cx) => { this.at = i; this.choose(r, Boolean(e.modifiers?.platform), cx); })
-        .child(r.kind === "page" ? svg(`mods/${NAME}/notes.svg`).size(14).flex_none().text_color(mapped ? t.accent : t.dim)
-          : div().w(14).flex_none().text_color(t.accent).child("+"))
+        .child(r.kind === "page" ? svg(`mods/${NAME}/notes.svg`).size(ui.size.icon).flex_none().text_color(mapped ? t.accent : t.dim)
+          : div().w(ui.size.icon).flex_none().text_color(t.accent).child("+"))
         .child(div().flex_1().min_w(0).truncate().text_color(r.kind === "page" ? t.foreground : t.muted).when(mapped, (el) => el.font_semibold()).child(label))
-        .when(mapped, (el) => el.child(div().flex_none().text_size(11).text_color(t.accent).child("this space")))
-        .when(Boolean(details), (el) => el.child(div().flex_none().max_w(220).truncate().text_size(11).text_color(t.dim).child(details)));
+        .when(mapped, (el) => el.child(div().flex_none().text_size(ui.text.tiny).text_color(t.accent).child("this space")))
+        .when(Boolean(details), (el) => el.child(div().flex_none().max_w(220).truncate().text_size(ui.text.tiny).text_color(t.dim).child(details)));
     };
     const heading = this.step === "parents" ? `Create "${this.title()}" in…` : "Notion notes";
     const hint = this.busy ? "Creating…" : this.loading ? "Loading…" : "↵ panel · ⌘↵ pane";
-    return v_flex().id("nn-picker").track_focus(this.handle).w_full().p(18).gap(10).bg(t.popover).text_color(t.foreground).text_size(13)
+    return v_flex().id("nn-picker").track_focus(this.handle).w_full().p(18).gap(10).bg(t.popover).text_color(t.foreground).text_size(ui.text.body)
       .on_key_down((e, cx) => {
         if (e.key === "escape") closeOverlay(props().overlay);
         else if (e.key === "down") this.at = (this.at + 1) % rows.length;
@@ -127,13 +127,13 @@ export const pickerMethods = {
         cx.notify();
       })
       .child(h_flex().items_center().gap(8)
-        .child(div().flex_1().min_w(0).truncate().text_size(15).font_semibold().child(heading))
-        .child(div().flex_none().text_size(11).text_color(t.dim).child(hint)))
-      .child(h_flex().h(36).flex_none().px(10).gap(8).items_center().rounded(9).border_1().border_color(t.accent).bg(t.background)
-        .child(svg(`mods/${NAME}/notes.svg`).size(15).text_color(t.dim))
-        .child(Input.new(this.input).flex_1().h_full().text_size(12.8).text_color(t.foreground)))
-      .when(Boolean(this.error), (el) => el.child(div().text_size(11).text_color(t.ansi1).child(this.error)))
+        .child(div().flex_1().min_w(0).truncate().text_size(ui.text.h3).font_semibold().child(heading))
+        .child(div().flex_none().text_size(ui.text.tiny).text_color(t.dim).child(hint)))
+      .child(h_flex().h(ui.size.search).flex_none().px(10).gap(8).items_center().rounded(9).border_1().border_color(t.accent).bg(t.background)
+        .child(svg(`mods/${NAME}/notes.svg`).size(ui.size.iconLarge).text_color(t.dim))
+        .child(Input.new(this.input).flex_1().h_full().text_size(ui.text.input).text_color(t.foreground)))
+      .when(Boolean(this.error), (el) => el.child(div().text_size(ui.text.tiny).text_color(t.ansi1).child(this.error)))
       // The dialog sizes to its content (no height in mod.json); the list scrolls past MAX_ROWS.
-      .child(v_flex().id("nn-list").h(Math.min(rows.length, MAX_ROWS) * ROW).overflow_y_scrollbar().track_scroll(this.scroll).children(rows.map(row)));
+      .child(v_flex().id("nn-list").h(Math.min(rows.length, MAX_ROWS) * ui.size.pickerRow).overflow_y_scrollbar().track_scroll(this.scroll).children(rows.map(row)));
   },
 };

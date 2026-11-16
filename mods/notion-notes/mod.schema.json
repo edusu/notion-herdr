@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Notion notes mod.json",
+  "description": "What Herdr reads from the Notion notes mod.json, and the settings it takes.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "This file's schema, for editors."
+    },
+    "title": {
+      "type": "string",
+      "description": "The mod's name, as Herdr shows it."
+    },
+    "place": {
+      "enum": [
+        "left",
+        "right",
+        "top",
+        "bottom",
+        "none"
+      ],
+      "description": "Where Herdr first docks the mod. \"none\": only where a layout or another mod puts it."
+    },
+    "size": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Its first size, in pixels."
+    },
+    "focusable": {
+      "type": "boolean",
+      "description": "Lets pane.go give a shown copy the keyboard."
+    },
+    "overlay": {
+      "type": "object",
+      "description": "How mod.open shows it.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "dialog",
+            "popup",
+            "window"
+          ]
+        },
+        "width": {
+          "type": "number",
+          "minimum": 0
+        },
+        "height": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "settings": {
+      "type": "object",
+      "description": "Your changes. A setting left out uses its default.",
+      "additionalProperties": false,
+      "properties": {
+        "parents": {
+          "title": "Parents",
+          "description": "Where new pages go: [{ \"name\": \"Inbox\", \"ref\": \"page:<id>\" }], ref being page:<id>, database:<id> or data-source:<id>. None: private workspace pages.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "ref"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "ref": {
+                "type": "string"
+              }
+            }
+          },
+          "default": []
+        },
+        "datasource": {
+          "title": "Data source",
+          "description": "Data source (or database) id the picker lists when the query is empty. Empty: recently edited pages.",
+          "type": "string",
+          "default": ""
+        },
+        "ntn": {
+          "title": "Notion CLI",
+          "description": "The ntn command, or its full path.",
+          "type": "string",
+          "default": "ntn"
+        },
+        "font_size": {
+          "title": "Font size",
+          "description": "Size of this mod's main text in px; smaller and larger text keep their proportion to it.",
+          "type": "number",
+          "minimum": 9,
+          "maximum": 24,
+          "multipleOf": 0.5,
+          "x-step": 0.5,
+          "x-unit": "px",
+          "default": 13
+        },
+        "scale": {
+          "title": "Scale",
+          "description": "Scales this mod's icons, buttons and row heights. 1 is Herdr's own size.",
+          "type": "number",
+          "minimum": 0.8,
+          "maximum": 1.6,
+          "multipleOf": 0.05,
+          "x-step": 0.05,
+          "default": 1
+        }
+      }
+    }
+  }
+}

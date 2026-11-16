@@ -124,6 +124,8 @@ In the installed `mod.json`, under `settings`:
 | `parents` | `[]` | `[{ "name": "Inbox", "ref": "page:<id>" }]`; `ref` is `page:<id>`, `database:<id>` or `data-source:<id>`. None: new pages are private workspace pages. |
 | `datasource` | `""` | Data source (or database) id listed when the query is empty. Empty: recently edited pages. |
 | `ntn` | `"ntn"` | Path to the `ntn` binary. |
+| `font_size` | `13` | Main text size in px (9 to 24); other text keeps its proportion to it. |
+| `scale` | `1` | Icons, buttons and row heights (0.8 to 1.6). Heights holding text also grow with `font_size`. |
 
 ## What it runs
 

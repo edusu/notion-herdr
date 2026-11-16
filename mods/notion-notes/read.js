@@ -4,6 +4,7 @@ import { div } from "gpui-kit";
 import { v_flex, h_flex, Checkbox, Collapsible, TextView, Input, InputState, Popup } from "gpui-base";
 import { theme, run } from "herdr";
 import { NAME, REFRESH_EVERY } from "./store.js";
+import { ui } from "./ui.js";
 import { readable } from "./notion.js";
 import { parseBlocks, children, toggleTodo, cell, replaceBlock, insertAfter, retype, continuation, editParts, nextEditable, slashQuery, commands, editableCell } from "./blocks.js";
 
@@ -22,14 +23,14 @@ export const sourcesChanged = () => sourcesRev;
 
 const tag = (t, text, color) => {
   const ink = t[TAG_COLORS[color] ?? "muted"];
-  return div().min_w(0).truncate().rounded(10).border_1().border_color(ink).bg(t.raised).px(6).text_xs().text_color(ink).child(text);
+  return div().min_w(0).truncate().rounded(10).border_1().border_color(ink).bg(t.raised).px(6).text_size(ui.text.small).text_color(ink).child(text);
 };
 
 // One TextView per block keeps bold, code and links working. Ids are the block's first line,
 // which stays unique and stable while a to-do is toggled.
 const md = (id, source) => TextView.markdown(id, source).selectable(true);
 
-const HEADING_SIZE = [0, 22, 18, 15];
+const HEADING_TEXT = [null, "title", "h2", "h3"];
 const LISTS = new Set(["bullet", "numbered", "todo"]);
 // Enter and Backspace on an empty field of these types turn it into a paragraph first.
 const LEAVES_TYPE = new Set([...LISTS, "heading", "quote"]);
@@ -37,7 +38,7 @@ const sameBlock = (a, b) => a.from === b.from && a.raw === b.raw;
 // Released late because closing can run inside the state's own submit or blur event.
 export const release = (state, cx) => (cx ? cx.timer.after(300, () => state.release()) : state.release());
 const menuBox = (id, w, t) => v_flex().id(id).w(w).p(4).gap(1).rounded(8).border_1().border_color(t.border).bg(t.popover);
-const menuRow = (id, on, t) => h_flex().id(id).h(26).px(8).items_center().rounded(4).cursor_pointer()
+const menuRow = (id, on, t) => h_flex().id(id).h(ui.size.row).px(8).items_center().rounded(4).cursor_pointer()
   .when(on, (r) => r.bg(t.hover)).hover((s) => s.bg(t.hover));
 
 export const readMethods = {
@@ -252,12 +253,12 @@ export const readMethods = {
     return v_flex().flex_1().min_w(0).gap(2)
       .child(Popup.new("nn-slash", h_flex().id("nn-field").track_focus(this.fieldFocus).on_key_down((e, cx) => this.fieldKey(e, cx))
         .child(Input.new(ed.state).flex_1().text_size(size).text_color(t.foreground))).anchor("bottom_left")
-        .when(items.length > 0, (el) => el.content(menuBox("nn-menu", 220, t)
-          .children(items.map((c, i) => menuRow(`nn-cmd-${c.id}`, i === ed.slash.at, t).text_size(12).text_color(t.foreground)
+        .when(items.length > 0, (el) => el.content(menuBox("nn-menu", ui.size.menu, t)
+          .children(items.map((c, i) => menuRow(`nn-cmd-${c.id}`, i === ed.slash.at, t).text_size(ui.text.small).text_color(t.foreground)
             .on_click((_e, cx) => { this.command(c.id, cx); cx.notify(); }).child(c.label))))))
-      .when(ed.stale, (el) => el.child(h_flex().gap(8).items_center().text_size(11).text_color(t.blocked)
+      .when(ed.stale, (el) => el.child(h_flex().gap(8).items_center().text_size(ui.text.tiny).text_color(t.blocked)
         .child(div().flex_1().min_w(0).child("This block changed in Notion; copy your text or discard it"))
-        .child(h_flex().id("nn-discard").h(22).px(8).items_center().flex_none().rounded(6).border_1().border_color(t.input)
+        .child(h_flex().id("nn-discard").h(ui.size.smallButton).px(8).items_center().flex_none().rounded(6).border_1().border_color(t.input)
           .bg(t.raised).text_color(t.foreground).cursor_pointer().hover((s) => s.opacity(0.88))
           .on_click((_e, cx) => { this.closeEdit(cx); cx.notify(); }).child("Discard"))));
   },
@@ -344,18 +345,18 @@ export const readMethods = {
     return h_flex().id("nn-cell-input").flex_1().min_w(0).track_focus(this.fieldFocus)
       .on_click((_e, cx) => cx.stop_propagation())
       .on_key_down((e, cx) => { if (e.keystroke === "escape") { this.closeCell(cx); cx.notify(); } })
-      .child(Input.new(this.cellEdit.state).flex_1().text_size(12).text_color(t.foreground));
+      .child(Input.new(this.cellEdit.state).flex_1().text_size(ui.text.small).text_color(t.foreground));
   },
 
   // The options of a select or status cell, each drawn as its tag; only select can be emptied.
   cellMenu(c, t) {
     const items = [...(c.col.type === "select" ? [{ name: null }] : []), ...c.col.options];
-    return menuBox(`${c.id}-menu`, 200, t)
+    return menuBox(`${c.id}-menu`, ui.size.cellMenu, t)
       .on_click((_e, cx) => cx.stop_propagation())
       .on_mouse_down_out((_e, cx) => { this.menuClosed = { id: c.id, at: Date.now() }; this.closeCell(cx); cx.notify(); })
       .children(items.map((o) => menuRow(`${c.id}-o-${o.name ?? ""}`, (o.name ?? "") === c.text, t)
         .on_click((_e, cx) => this.pickOption(c, o.name, cx))
-        .child(o.name === null ? div().text_xs().text_color(t.muted).child("Empty") : tag(t, o.name, o.color))));
+        .child(o.name === null ? div().text_size(ui.text.small).text_color(t.muted).child("Empty") : tag(t, o.name, o.color))));
   },
 
   // A page opens in a pane to the right, ⌘-click opens it in Notion.
@@ -394,9 +395,9 @@ export const readMethods = {
         }
       });
     }
-    const note = (text, color) => div().flex_none().px(6).text_xs().text_color(color).child(text);
+    const note = (text, color) => div().flex_none().px(6).text_size(ui.text.small).text_color(color).child(text);
     const errorOf = (k) => (e.errors?.has(k) ? [note(e.errors.get(k), t.ansi1)] : []);
-    const action = (id, label, onClick) => h_flex().id(id).flex_none().px(6).py(4).cursor_pointer().text_xs().text_color(t.muted)
+    const action = (id, label, onClick) => h_flex().id(id).flex_none().px(6).py(4).cursor_pointer().text_size(ui.text.small).text_color(t.muted)
       .on_click(onClick).child(label);
     const d = e.data;
     if (!d) return [e.error ? note(e.error, t.ansi1) : note("Loading…", t.dim)];
@@ -421,9 +422,9 @@ export const readMethods = {
       : e.writing?.has(adding) ? note("Creating row…", t.muted)
       : action(adding, "+ New", (ev, cx) => this.clickCell({ id: adding, e, source: block.source, col: title, prop: {}, text: "" }, ev, cx));
     return [
-      h_flex().flex_none().px(6).py(2).gap(8).border_b(1).border_color(t.border).text_xs().text_color(t.muted)
+      h_flex().flex_none().px(6).py(2).gap(8).border_b(1).border_color(t.border).text_size(ui.text.small).text_color(t.muted)
         .children(d.columns.map((col, c) => div().flex_1().flex_grow(c === 0 ? 2 : 1).min_w(0).truncate().child(col.name))),
-      ...d.rows.flatMap((r, i) => [h_flex().id(`nn-r-${block.from}-${i}`).flex_none().min_h(26).px(6).gap(8).items_center().rounded(6)
+      ...d.rows.flatMap((r, i) => [h_flex().id(`nn-r-${block.from}-${i}`).flex_none().min_h(ui.size.row).px(6).gap(8).items_center().rounded(6)
         .cursor_pointer().hover((s) => s.bg(t.hover))
         .on_click((ev, cx) => this.openPage(r.id, r.url, ev, cx))
         .children(cells(r)), ...errorOf(r.id)]),
@@ -442,7 +443,7 @@ export const readMethods = {
       const pad = (depth) => h_flex().flex_none().items_start().pl(Math.max(0, depth - (base ?? 0)) * INDENT);
       const editable = !ro && base === null && editParts(block) !== null;
       // A text cell opens its block for editing on click; while open, the field takes its place.
-      const inPlace = (view, size = 13) => this.isEditing(block) ? this.field(t, size)
+      const inPlace = (view, size = ui.text.body) => this.isEditing(block) ? this.field(t, size)
         : editable ? view.id(`nn-e-${block.from}`).on_click((e, cx) => this.editBlock(block, e, cx)) : view;
       if (this.creating && sameBlock(this.creating, block)) return pad(0).child(div().text_color(t.muted).child("Creating page…"));
       switch (block.type) {
@@ -450,18 +451,18 @@ export const readMethods = {
           const on = block.done;
           return pad(block.depth).gap(8)
             .child(Checkbox.new(`nn-t-${block.from}`).checked(on).disabled(ro).on_change((_v, cx) => this.toggleBlock(block, cx))
-              .accessibility_label(block.label).flex().items_center().justify_center().size(15).flex_none().mt(2).rounded(4)
+              .accessibility_label(block.label).flex().items_center().justify_center().size(ui.size.check).flex_none().mt(2).rounded(4)
               .border_1().border_color(on ? t.accent : t.border).bg(on ? t.accent : t.background)
               .when(!ro, (el) => el.cursor_pointer())
-              .when(on, (el) => el.child(div().text_size(11).text_color(t.accent_foreground).child("✓"))))
-            .when(Boolean(block.label) || editable, (el) => el.child(inPlace(div().flex_1().min_w(0).min_h(20).text_color(on ? t.dim : t.foreground)
+              .when(on, (el) => el.child(div().text_size(ui.text.tiny).text_color(t.accent_foreground).child("✓"))))
+            .when(Boolean(block.label) || editable, (el) => el.child(inPlace(div().flex_1().min_w(0).min_h(ui.size.line).text_color(on ? t.dim : t.foreground)
               .when(Boolean(block.label), (d) => d.child(md(id, on ? `~~${block.label}~~` : block.label))))));
         }
         case "bullet":
         case "numbered":
           return pad(block.depth).gap(6)
             .child(div().flex_none().text_color(t.muted).child(block.type === "bullet" ? "•" : block.marker))
-            .child(inPlace(div().flex_1().min_w(0).min_h(20).child(md(id, block.text))));
+            .child(inPlace(div().flex_1().min_w(0).min_h(ui.size.line).child(md(id, block.text))));
         case "paragraph":
           return pad(block.depth).child(inPlace(div().flex_1().min_w(0).child(md(id, block.text))));
         case "quote":
@@ -472,7 +473,7 @@ export const readMethods = {
           return div().flex_none().h(1).my(6).bg(t.border);
         case "page":
         case "database": {
-          const link = h_flex().id(`nn-p-${block.from}`).flex_none().h(28).px(6).gap(8).items_center().rounded(6)
+          const link = h_flex().id(`nn-p-${block.from}`).flex_none().h(ui.size.block).px(6).gap(8).items_center().rounded(6)
             .when(Boolean(block.id), (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_click((e, cx) => this.openBlock(block, e, cx)))
             .child(div().flex_none().child(block.type === "page" ? "📄" : "🗃️"))
             .child(div().flex_1().min_w(0).truncate().child(block.title));
@@ -485,7 +486,7 @@ export const readMethods = {
         case "blank":
           return pad(0).child(inPlace(div().flex_none().h(8)));
         case "heading":
-          return pad(0).child(inPlace(div().flex_1().min_w(0).child(md(id, block.raw)), HEADING_SIZE[block.level]));
+          return pad(0).child(inPlace(div().flex_1().min_w(0).child(md(id, block.raw)), ui.text[HEADING_TEXT[block.level]]));
         default: {
           const inner = children(block);
           if (!inner) return md(id, readable(block.raw));
@@ -496,9 +497,9 @@ export const readMethods = {
           }
           const open = this.openToggles.has(block.from);
           return Collapsible.new().flex().flex_col().flex_none().open(open)
-            .child(h_flex().id(`nn-d-${block.from}`).flex_none().min_h(28).gap(6).items_center().cursor_pointer()
+            .child(h_flex().id(`nn-d-${block.from}`).flex_none().min_h(ui.size.block).gap(6).items_center().cursor_pointer()
               .on_click((_e, cx) => { if (open) this.openToggles.delete(block.from); else this.openToggles.add(block.from); cx.notify(); })
-              .child(div().flex_none().w(12).text_color(t.muted).child(open ? "▾" : "▸"))
+              .child(div().flex_none().w(ui.size.arrow).text_color(t.muted).child(open ? "▾" : "▸"))
               .child(div().flex_1().min_w(0).child(md(`nn-s-${block.from}`, inner.summary ?? ""))))
             .content(h_flex().flex_none().pl(INDENT).child(body));
         }
@@ -508,7 +509,7 @@ export const readMethods = {
     const rows = blocks.map((b) => row(b));
     // The open block no longer matches any block of the note: keep its draft on screen with the notice.
     // A line not yet added (writeAtEnd) is drawn there as well, and is only stale if adding it failed.
-    if (ed && !blocks.some((b) => sameBlock(b, ed.block))) { ed.stale ||= !ed.block.after; rows.push(h_flex().flex_none().child(this.field(t, 13))); }
+    if (ed && !blocks.some((b) => sameBlock(b, ed.block))) { ed.stale ||= !ed.block.after; rows.push(h_flex().flex_none().child(this.field(t, ui.text.body))); }
     if (!ro) {
       rows.push(div().id("nn-tail").flex_grow(1).min_h(64).cursor_pointer().text_color(t.dim)
         .on_click((e, cx) => this.writeAtEnd(e, cx))

@@ -2,6 +2,7 @@
 // reloads the mod) and the mod's settings.
 import { spaces, home, appHome, readTextFile, writeTextFile, setShared } from "herdr";
 import { DEFAULT_NTN, mappedPage } from "./notion.js";
+import { TEXT } from "./ui.js";
 import * as fs from "fs/promises";
 
 export const NAME = "notion-notes";
@@ -9,7 +10,7 @@ export const NAME = "notion-notes";
 export const REFRESH_EVERY = 30000;
 /** Shared key the picker bumps after it changes map.json. */
 export const MAP_REV = "notion-notes.map";
-const DEFAULTS = { parents: [], datasource: "", ntn: DEFAULT_NTN };
+const DEFAULTS = { parents: [], datasource: "", ntn: DEFAULT_NTN, scale: 1, font_size: TEXT.body };
 
 export const dir = () => `${appHome()}/notion-notes`;
 export const mapPath = () => `${dir()}/map.json`;
