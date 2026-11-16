@@ -151,12 +151,13 @@ class NotionNotes extends View {
   // Local saves every 0.8 s, like tab-notes; an upload once typing has stopped for 3 s.
   // Its timer keeps running while the panel is hidden, so this is where showing is noticed.
   tick(cx) {
-    if (this.mode === "panel") {
-      const visible = shownIn(layout());
-      // After a space change while hidden, render opens the new note and refreshes it there.
-      if (visible && !this.visible && spaceKey() === this.key) this.refresh(cx);
-      this.visible = visible;
-    }
+    // A shown note is read again every REFRESH_EVERY, so edits from another device arrive.
+    // After a space change while hidden, render opens the new note and refreshes it there.
+    // shortcut: a pane view counts as shown whenever the focused tab holds any note pane (panes() does not say which page a pane shows); fine while one note pane per tab is the norm.
+    const tab = this.mode === "pane" && focused()?.tab;
+    const shown = this.mode === "panel" ? shownIn(layout()) && spaceKey() === this.key
+      : tab && panes().some((p) => p.mod === NAME && p.tab === tab);
+    if (shown) this.refresh(cx);
     // A read-only second view takes the note over once the view that edited it is gone.
     if (this.meta?.elsewhere && !owners.has(this.page)) this.open(this.page, cx);
     if (this.renamedSeen !== renamedRev) {
@@ -416,8 +417,7 @@ class NotionNotes extends View {
         this.editor = this.editorFor(m);
         await this.disk(() => persist(id, m, p.markdown));
       } catch (e) {
-        // A failed read does not count against the throttle: the next show tries again.
-        if (fetchedAt.get(id) === started) fetchedAt.delete(id);
+        // The throttle stays set, so polling retries a failed read after REFRESH_EVERY, not every tick.
         if (this.meta === m) this.errors.refresh = `Refresh failed: ${e.message}`;
       } finally {
         cx.notify();

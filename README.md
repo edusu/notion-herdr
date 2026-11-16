@@ -171,9 +171,9 @@ would reload the mod):
   Notion's version, dropping local edits) and **Overwrite** (upload local edits anyway).
   Content is compared rather than `last_edited_time` because Notion rounds that time to the
   minute.
-- A note opens from its local copy, then is read again from Notion when it is opened, when
-  the panel is shown again, or when the space changes back to it: at most once per 15 s per
-  page, and only without unsent edits. A Notion change replaces the text unless you typed
+- A note opens from its local copy, then is read again from Notion when it is opened and
+  every 30 s while it is shown, so edits made on another device arrive: only without unsent
+  edits or an open block. A Notion change replaces the text unless you typed
   meanwhile; a failed read only shows an error line.
 - Pages Notion returns as truncated or with unsupported blocks, and notes over 340,000
   characters (Herdr reads at most 1 MiB per file), open read-only.
