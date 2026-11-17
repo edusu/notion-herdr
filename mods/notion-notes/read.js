@@ -1,12 +1,12 @@
 // The read view: the note drawn block by block from parseBlocks. It only changes text through
-// toggleTodo and the open block's write-back on the editor, so uploads still send the editor's text and never one rebuilt from blocks.
-import { div } from "gpui-kit";
+// toggleTodo, moveBlock and the open block's write-back on the editor, so uploads still send the editor's text and never one rebuilt from blocks.
+import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, Checkbox, Collapsible, TextView, Input, InputState, Popup } from "gpui-base";
 import { theme, run } from "herdr";
 import { NAME, REFRESH_EVERY } from "./store.js";
 import { ui } from "./ui.js";
 import { readable } from "./notion.js";
-import { parseBlocks, children, toggleTodo, cell, replaceBlock, insertAfter, retype, continuation, editParts, nextEditable, slashQuery, commands, editableCell } from "./blocks.js";
+import { parseBlocks, children, toggleTodo, cell, replaceBlock, insertAfter, moveBlock, retype, continuation, editParts, nextEditable, slashQuery, commands, editableCell } from "./blocks.js";
 
 const INDENT = 18;
 
@@ -372,6 +372,35 @@ export const readMethods = {
     else this.openInNotion(cx, block.id, block.url);
   },
 
+  // A press on a block's handle starts dragging it; the open field is saved first, as a click on another block does.
+  startDrag(block, cx) {
+    cx.stop_propagation();
+    if (!this.endEdit(cx)) return;
+    this.drag = { block: this.blocks().find((b) => b.from === block.from) ?? block, before: null, text: this.editor.value() };
+    // Escape reaches the read view only while it holds the keyboard.
+    (this.readFocus ??= cx.focus_handle()).focus();
+    cx.notify();
+  },
+
+  // `before` is the line the dragged block would land above, as moveBlock takes it.
+  dragTo(before, cx) {
+    if (!this.drag || this.drag.before === before) return;
+    this.drag.before = before;
+    cx.notify();
+  },
+
+  // Ends a drag, moving the block to where the indicator is when `drop`. A text that changed during the
+  // drag (a refresh, another page) cancels it: `before` was picked on the old lines.
+  endDrag(drop, cx) {
+    const d = this.drag;
+    if (!d) return;
+    this.drag = null;
+    const text = this.editor?.value();
+    const next = drop && d.before !== null && text === d.text && !this.meta?.readonly && !this.creating ? moveBlock(text, d.block, d.before) : null;
+    if (next !== null && next !== text) this.setText(next);
+    cx.notify();
+  },
+
   // The rows under a database's title: the table, "Loading…" or the read error. Draws from the
   // cache and starts a read when it is older than REFRESH_EVERY.
   renderSource(block, t, cx) {
@@ -505,17 +534,40 @@ export const readMethods = {
         }
       }
     };
-    const blocks = this.blocks(), ed = this.editing;
-    const rows = blocks.map((b) => row(b));
+    const blocks = this.blocks(), ed = this.editing, d = this.drag, last = blocks.at(-1);
+    const handles = !ro && !this.creating;
+    // The gap the dragged block would land in; none while it would stay where it is.
+    const gap = d && d.before !== null && (d.before < d.block.from || d.before > d.block.to + 1) ? d.before : null;
+    // Each top-level block sits beside a gutter holding its drag handle, shown while the pointer is on the row.
+    const grip = (b, el) => h_flex().id(`nn-g-${b.from}`).relative().flex_none().items_start()
+      .on_hover((on, cx) => {
+        const h = on ? b.from : this.hoverBlock === b.from ? null : this.hoverBlock;
+        if (h !== this.hoverBlock) { this.hoverBlock = h; cx.notify(); }
+      })
+      .on_mouse_move((e, cx) => this.dragTo(e.local_position.y < e.bounds.height / 2 ? b.from : b.to + 1, cx))
+      .when(d?.block.from === b.from, (r) => r.opacity(0.4))
+      .child(div().id(`nn-h-${b.from}`).flex_none().w(ui.size.grip).h(ui.size.line).flex().items_center().justify_center().cursor_grab()
+        .when(!handles || (this.hoverBlock !== b.from && d?.block.from !== b.from), (h) => h.invisible())
+        .when(handles, (h) => h.on_mouse_down("left", (_e, cx) => this.startDrag(b, cx)))
+        .child(svg(`mods/${NAME}/grip-vertical.svg`).size(ui.size.icon).text_color(t.muted)))
+      .child(v_flex().flex_1().min_w(0).child(el))
+      .when(gap === b.from || (b === last && gap === b.to + 1), (r) => r.child(div().absolute().left(0).right(0).h(2).bg(t.accent)
+        .when(gap === b.from, (l) => l.top(-3)).when(gap !== b.from, (l) => l.bottom(-3))));
+    const rows = blocks.map((b) => grip(b, row(b)));
     // The open block no longer matches any block of the note: keep its draft on screen with the notice.
     // A line not yet added (writeAtEnd) is drawn there as well, and is only stale if adding it failed.
-    if (ed && !blocks.some((b) => sameBlock(b, ed.block))) { ed.stale ||= !ed.block.after; rows.push(h_flex().flex_none().child(this.field(t, ui.text.body))); }
+    if (ed && !blocks.some((b) => sameBlock(b, ed.block))) { ed.stale ||= !ed.block.after; rows.push(h_flex().flex_none().pl(ui.size.grip).child(this.field(t, ui.text.body))); }
     if (!ro) {
-      rows.push(div().id("nn-tail").flex_grow(1).min_h(64).cursor_pointer().text_color(t.dim)
-        .on_click((e, cx) => this.writeAtEnd(e, cx))
+      rows.push(div().id("nn-tail").flex_grow(1).min_h(64).pl(ui.size.grip).cursor_pointer().text_color(t.dim)
+        .on_click((e, cx) => this.writeAtEnd(e, cx)).on_mouse_move((_e, cx) => this.dragTo(last.to + 1, cx))
         .when(!ed && this.parsedText === "", (el) => el.child("Click to write")));
     }
     return v_flex().id("nn-read").flex_1().min_h(0).overflow_y_scrollbar().px(14).py(10).gap(4)
+      // A release anywhere in the list ends the drag; leaving the list or Escape cancels it.
+      .on_mouse_up("left", (_e, cx) => this.endDrag(true, cx))
+      .on_hover((on, cx) => { if (!on) this.endDrag(false, cx); })
+      .when(Boolean(d), (el) => el.cursor_grabbing().track_focus(this.readFocus)
+        .on_key_down((e, cx) => { if (e.keystroke === "escape") this.endDrag(false, cx); }))
       .children(rows);
   },
 

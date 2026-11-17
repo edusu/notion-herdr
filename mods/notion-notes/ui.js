@@ -6,7 +6,7 @@ export const TEXT = { title: 22, h2: 18, h3: 15, body: 13, input: 12.8, small: 1
 /** Heights and widths that hold text: they follow the larger of scale and font_size, so text always fits. */
 export const BOX = {
   header: 42, paneHeader: 34, pickerRow: 32, search: 36, block: 28, button: 26, row: 26, smallButton: 22, line: 20,
-  check: 15, arrow: 12, menu: 220, cellMenu: 200,
+  check: 15, arrow: 12, grip: 18, menu: 220, cellMenu: 200,
 };
 /** Icons follow scale only. */
 export const ICON = { icon: 14, iconLarge: 15 };

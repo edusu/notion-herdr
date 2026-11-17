@@ -68,6 +68,14 @@ changes the note in the ways below; everything else needs Markdown. Read-only no
 - **To-dos**: the checkbox marks or unmarks the item in the note, and the edit uploads like any
   other. Done items show struck through. Not clickable in read-only notes, nor for to-dos nested
   inside other tags (columns...).
+- **Reordering**: pointing at a block shows a six-dot handle in the left gutter; drag it and drop
+  where the accent line shows to move the block there, and the move uploads like any other edit.
+  Releasing on the same spot changes nothing; `Esc` or leaving the list while dragging cancels.
+  Only top-level blocks move (a callout or toggle moves whole, with its contents); a nested list
+  item moves alone, keeping its indentation, without its sub-items. A drop that would join two
+  quotes or two tables into one does nothing. The list does not scroll by itself while dragging.
+  Pressing a handle saves an open field first. No handles in read-only notes or while a subpage is
+  being created.
 - **Callouts and toggles**: callouts are drawn as boxes with their icon and toggles as collapsible
   sections (their open state is not remembered, and is kept by line: adding lines above an open
   toggle can open another one instead). Their to-dos can be ticked; their other text is
@@ -210,4 +218,4 @@ against `tests/fake-ntn.mjs`.
 
 The save chain follows `tab-notes` from
 [ozcberkay/herdr-coban](https://github.com/ozcberkay/herdr-coban), Apache-2.0
-(`LICENSE-tab-notes`). `notes.svg`, `external-link.svg` and `refresh.svg` are Lucide's `file-text`, `external-link` and `refresh-cw`, ISC (`mods/notion-notes/LICENSE-lucide`).
+(`LICENSE-tab-notes`). `notes.svg`, `external-link.svg`, `refresh.svg` and `grip-vertical.svg` are Lucide's `file-text`, `external-link`, `refresh-cw` and `grip-vertical`, ISC (`mods/notion-notes/LICENSE-lucide`).

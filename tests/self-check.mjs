@@ -8,7 +8,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { client, upload, serial, titleOf, refreshDecision, pages, ago, pageUrl, readable, mappedPage, sourceNames, canonicalId, propertyValue } from "../mods/notion-notes/notion.js";
 import { ui, setSizes, TEXT, BOX, ICON } from "../mods/notion-notes/ui.js";
-import { parseBlocks, children, todos, toggleTodo, cell, replaceBlock, insertAfter, retype, continuation, slashQuery, commands, editParts, nextEditable, appendedPage, editableCell } from "../mods/notion-notes/blocks.js";
+import { parseBlocks, children, todos, toggleTodo, cell, replaceBlock, insertAfter, moveBlock, retype, continuation, slashQuery, commands, editParts, nextEditable, appendedPage, editableCell } from "../mods/notion-notes/blocks.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ntn = join(here, "fake-ntn.mjs");
@@ -672,6 +672,26 @@ test("replaceBlock swaps a block's lines, removes them for null, leaves an empty
   assert.equal(replaceBlock(text, { from: 3, to: 9, raw: "> b\nlast" }, "x"), null);
   assert.equal(replaceBlock(text, { from: -1, to: 0, raw: "" }, "x"), null);
   assert.equal(replaceBlock(text, undefined, "x"), null);
+});
+
+test("moveBlock puts a block's lines before line N or at the end, is a no-op at its own place, and refuses a stale block or target", () => {
+  const text = "# Title\n> a\n> b\n  - nested\nlast";
+  const [h, q, n, l] = parseBlocks(text);
+  assert.equal(moveBlock(text, q, 0), "> a\n> b\n# Title\n  - nested\nlast");
+  assert.equal(moveBlock(text, h, 5), "> a\n> b\n  - nested\nlast\n# Title");
+  assert.equal(moveBlock(text, h, 3), "> a\n> b\n# Title\n  - nested\nlast");
+  assert.equal(moveBlock(text, n, 1), "# Title\n  - nested\n> a\n> b\nlast");
+  assert.equal(moveBlock(text, l, 1), "# Title\nlast\n> a\n> b\n  - nested");
+  for (const at of [1, 2, 3]) assert.equal(moveBlock(text, q, at), text);
+  assert.equal(moveBlock("new\n" + text, q, 0), null);
+  for (const at of [-1, 6, 1.5, undefined]) assert.equal(moveBlock(text, q, at), null);
+  // Two quotes or two tables that end up next to each other would read back as one block.
+  const split = "> a\npara\n> c\n| x |\nmid\n| y |";
+  const [qa, para, , , mid] = parseBlocks(split);
+  assert.equal(moveBlock(split, qa, 2), null);
+  assert.equal(moveBlock(split, para, 6), null);
+  assert.equal(moveBlock(split, mid, 0), null);
+  assert.equal(moveBlock(split, qa, 4), "para\n> c\n| x |\n> a\nmid\n| y |");
 });
 
 test("insertAfter adds lines below a block and refuses a stale block", () => {

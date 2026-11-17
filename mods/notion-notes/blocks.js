@@ -196,6 +196,22 @@ export function insertAfter(text, block, raw) {
   return lines.join("\n");
 }
 
+/**
+ * `text` with the lines of `block` moved to just before line `before` of `text` (`before` is the
+ * `from` of the block it lands above, or the line count to land at the end). `text` itself when
+ * `before` is within or right after `block`; null if `block` is stale, `before` is out of range, or
+ * the move would join two blocks into one (two quotes or two tables left next to each other).
+ */
+export function moveBlock(text, block, before) {
+  const lines = linesOf(text, block);
+  if (!lines || !Number.isInteger(before) || before < 0 || before > lines.length) return null;
+  if (before >= block.from && before <= block.to + 1) return text;
+  const moved = lines.splice(block.from, block.to - block.from + 1);
+  lines.splice(before > block.to ? before - moved.length : before, 0, ...moved);
+  const next = lines.join("\n");
+  return parseBlocks(next).length === parseBlocks(text).length ? next : null;
+}
+
 const indentOf = (l) => /^\s*/.exec(l)[0];
 const PREFIX = { paragraph: "", h1: "# ", h2: "## ", h3: "### ", todo: "- [ ] ", bullet: "- ", numbered: "1. ", quote: "> " };
 // Only these keep their indentation: the parser reads a heading or a quote only when unindented.
