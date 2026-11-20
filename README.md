@@ -73,7 +73,7 @@ changes the note in the ways below; everything else needs Markdown. Read-only no
   Releasing on the same spot changes nothing; `Esc` or leaving the list while dragging cancels.
   Only top-level blocks move (a callout or toggle moves whole, with its contents); a nested list
   item moves alone, keeping its indentation, without its sub-items. A drop that would join two
-  quotes or two tables into one does nothing. The list does not scroll by itself while dragging.
+  quotes or two tables into one does nothing. A `---` divider left right under a paragraph is written `***`, since `---` there would make the paragraph a heading. The list does not scroll by itself while dragging.
   Pressing a handle saves an open field first. No handles in read-only notes or while a subpage is
   being created.
 - **Callouts and toggles**: callouts are drawn as boxes with their icon and toggles as collapsible

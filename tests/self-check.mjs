@@ -692,6 +692,11 @@ test("moveBlock puts a block's lines before line N or at the end, is a no-op at 
   assert.equal(moveBlock(split, para, 6), null);
   assert.equal(moveBlock(split, mid, 0), null);
   assert.equal(moveBlock(split, qa, 4), "para\n> c\n| x |\n> a\nmid\n| y |");
+  // A `---` divider left under a paragraph would read as a heading, so it becomes `***`.
+  const rule = "a\n\n---\nb", [, , hr, b2] = parseBlocks(rule);
+  assert.equal(moveBlock(rule, hr, 1), "a\n***\n\nb");
+  assert.equal(moveBlock(rule, b2, 2), "a\n\nb\n***");
+  assert.equal(moveBlock("# h\n\n---", parseBlocks("# h\n\n---")[2], 1), "# h\n---\n");
 });
 
 test("insertAfter adds lines below a block and refuses a stale block", () => {

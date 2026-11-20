@@ -174,9 +174,10 @@ class NotionNotes extends View {
   }
 
   save(cx) {
-    this.dirty = false;
     const id = this.page, m = this.meta, text = this.editor.value();
+    // Staying dirty keeps a refresh from replacing the unsaved text and retries once it is short enough.
     if (text.length > MAX_CHARS) { this.errors.save = "Note too large to save locally"; return; }
+    this.dirty = false;
     // The meta only changes when the note turns pending; later saves rewrite just the text.
     const flips = !m.pending;
     changed(m);
@@ -199,6 +200,8 @@ class NotionNotes extends View {
     cx.spawn(async (cx) => {
       try {
         await this.net(async () => {
+          // A save queued just before (as leaving a note does) must land first, or the older text goes up.
+          await this.disk(() => {});
           const text = m.savedText, rev = m.savedRev;
           const r = await upload(this.api, id, text, m.base, uploadPath(id), put, force);
           if (r.conflict) { if (this.meta === m) this.conflict = r.conflict; return; }
@@ -498,6 +501,8 @@ class NotionNotes extends View {
       if (!this.dirty || !this.editor || !this.meta) return;
       // An upload does not fit in close's 250 ms: keep it pending for the next start.
       const id = this.page, m = this.meta, text = this.editor.value();
+      // Past MAX_CHARS readTextFile would read the file back cut off, and that would be uploaded.
+      if (text.length > MAX_CHARS) return;
       changed(m);
       await this.disk(() => persist(id, m, text));
     } finally {

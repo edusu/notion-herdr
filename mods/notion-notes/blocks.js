@@ -208,8 +208,11 @@ export function moveBlock(text, block, before) {
   if (before >= block.from && before <= block.to + 1) return text;
   const moved = lines.splice(block.from, block.to - block.from + 1);
   lines.splice(before > block.to ? before - moved.length : before, 0, ...moved);
-  const next = lines.join("\n");
-  return parseBlocks(next).length === parseBlocks(text).length ? next : null;
+  const out = parseBlocks(lines.join("\n"));
+  if (out.length !== parseBlocks(text).length) return null;
+  // `---` under a paragraph line reads as a setext heading, so such a divider is written `***`.
+  out.forEach((b, i) => { if (b.type === "divider" && b.raw.trim() === "---" && out[i - 1]?.type === "paragraph") lines[b.from] = b.raw.replace("---", "***"); });
+  return lines.join("\n");
 }
 
 const indentOf = (l) => /^\s*/.exec(l)[0];
