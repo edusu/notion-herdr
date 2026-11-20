@@ -96,6 +96,8 @@ class NotionNotes extends View {
       this.errors.draft ??= draft;
       cx.notify();
     })).catch(() => {});
+    // Before a pane's open: its load() waits on `listed`, which sweep() sets right away.
+    if (!swept) { swept = true; this.sweep(cx); }
     if (this.mode === "pane") {
       if (validId(p.page)) this.open(p.page, cx);
       else this.errors.open = "Not a Notion page id";
@@ -104,7 +106,6 @@ class NotionNotes extends View {
     this.renamedSeen = renamedRev;
     this.key = undefined; this.map = null; this.mapRev = shared(MAP_REV);
     this.loadMap(cx);
-    if (!swept) { swept = true; this.sweep(cx); }
   }
 
   // Uploads every note left pending by an earlier session, one at a time, through the same

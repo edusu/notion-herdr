@@ -193,7 +193,7 @@ would reload the mod):
 - Known limits: an upload cut off by quitting can show
   **Changed in Notion** on the next start even though Notion has your own text; Overwrite is
   then safe.
-- Closing Herdr leaves unsent edits marked `pending`. The first panel copy of the next app
+- Closing Herdr leaves unsent edits marked `pending`. The first note view (panel or pane) of the next app
   session uploads every pending note, one at a time and with the same conflict check; a
   conflict or failure stays pending, without an error until that note is opened.
 - Marking a to-do and saving a block in Read mode upload the whole page through `ntn pages edit`,
