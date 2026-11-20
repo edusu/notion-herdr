@@ -216,13 +216,14 @@ export const readMethods = {
   },
 
   fieldKey(e, cx) {
-    // Enter is left to the field's submit event. Backspace only arrives here when the field is empty.
+    // Enter is left to the field's submit event. Backspace and Delete only arrive here when the field is empty.
     const n = this.menu().length, slash = this.editing.slash;
     switch (e.keystroke) {
       case "escape": if (n) this.editing.slash = null; else { this.endEdit(cx); return; } break;
       case "up": if (n) slash.at = (slash.at + n - 1) % n; else this.move(-1, cx); break;
       case "down": if (n) slash.at = (slash.at + 1) % n; else this.move(1, cx); break;
-      case "backspace": this.backspace(cx); break;
+      case "backspace":
+      case "delete": this.backspace(cx); break;
       default: return;
     }
     cx.notify();
@@ -511,9 +512,11 @@ export const readMethods = {
             ? v_flex().flex_none().gap(2).child(link).children(this.renderSource(block, t, cx))
             : link;
         }
+        // flex_1: without a width of its own the click target is 0 px wide. Notion's empty block is a line; a blank line only spaces blocks.
         case "empty":
+          return pad(0).child(inPlace(div().flex_1().h(ui.size.line)));
         case "blank":
-          return pad(0).child(inPlace(div().flex_none().h(8)));
+          return pad(0).child(inPlace(div().flex_1().h(8)));
         case "heading":
           return pad(0).child(inPlace(div().flex_1().min_w(0).child(md(id, block.raw)), ui.text[HEADING_TEXT[block.level]]));
         default: {
