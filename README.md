@@ -139,8 +139,9 @@ In the installed `mod.json`, under `settings`:
 
 Only `ntn`, with ids and titles passed as separate arguments, never inside a shell string:
 
-- `ntn pages get <id> --json` to open or refresh a note and before and after each upload;
-- `ntn pages edit <id>` through `sh -c '"$1" pages edit "$2" < "$3"'` (exec has no stdin).
+- `ntn pages get <id> --json` to open or refresh a note and before each upload;
+- `ntn pages edit <id> --json` through `sh -c '"$1" pages edit "$2" --json < "$3"'` (exec has no stdin);
+  the markdown it returns becomes the new `base` (a `pages get` only when it does not return it whole).
   It never passes `--allow-deleting-content`, so child pages and databases are kept;
 - `ntn pages create --json --content=<frontmatter title> [--parent <ref>]` for the picker's new
   page and for `/page`, which creates under `--parent page:<id>` (`--content=…` is joined with `=`
@@ -189,8 +190,7 @@ would reload the mod):
 - Pages Notion returns as truncated or with unsupported blocks, and notes over 340,000
   characters (Herdr reads at most 1 MiB per file), open read-only.
 - A page already open in another view (panel and pane) opens read-only in the second one.
-- Known limits: after `pages edit`, the new `base` comes from a second `pages get`, so a Notion
-  edit landing between the two is not detected. An upload cut off by quitting can show
+- Known limits: an upload cut off by quitting can show
   **Changed in Notion** on the next start even though Notion has your own text; Overwrite is
   then safe.
 - Closing Herdr leaves unsent edits marked `pending`. The first panel copy of the next app

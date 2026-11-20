@@ -201,6 +201,14 @@ test("a body that starts with frontmatter-like lines survives", async () => {
   assert.equal(state().pages[ID].markdown, "---\nfoo: 1\n---\nbar");
 });
 
+test("the base after an upload is the edit's own result, not a later read", async () => {
+  reset({ pages: { [ID]: { title: "t", markdown: "old" } } });
+  let gets = 0;
+  const counted = { ...api, get: (id) => { gets++; return api.get(id); } };
+  assert.deepEqual(await upload(counted, ID, "new _text_", "old", file, write), { base: "new *text*" });
+  assert.equal(gets, 1);
+});
+
 test("a page changed in Notion is a conflict and is not edited", async () => {
   reset({ pages: { [ID]: { title: "t", markdown: "edited elsewhere" } } });
   const r = await upload(api, ID, "mine", "old", file, write);

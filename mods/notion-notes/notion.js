@@ -228,7 +228,14 @@ export function client(exec, ntn) {
     append: (id, markdown) => json(["api", `v1/pages/${id}/markdown`, "-X", "PATCH", "-d",
       JSON.stringify({ type: "insert_content", insert_content: { content: markdown, position: { type: "end" } } })]),
     // Never pass --allow-deleting-content: child pages and databases must survive an edit.
-    edit: (id, file) => run("sh", ["-c", '"$1" pages edit "$2" < "$3"', "sh", ntn, id, file]),
+    // The page's markdown right after the edit, or null when the output does not carry it whole.
+    async edit(id, file) {
+      const out = await run("sh", ["-c", '"$1" pages edit "$2" --json < "$3"', "sh", ntn, id, file]);
+      try {
+        const m = JSON.parse(out);
+        return typeof m.markdown === "string" && !m.truncated && !m.unknown_block_ids?.length ? m.markdown : null;
+      } catch { return null; }
+    },
   };
 }
 
@@ -243,8 +250,9 @@ export async function upload(api, id, text, base, file, write, force = false) {
   if (!force && remote.markdown !== base) return { conflict: remote };
   // `ntn pages edit` rejects empty markdown; this is how Notion itself writes an empty page.
   await write(file, PREFIX + (text.trim() ? text : "<empty-block/>"));
-  await api.edit(id, file);
-  return { base: (await api.get(id)).markdown };
+  // A separate read after the edit could take in an edit from elsewhere as base, which the next upload would then delete.
+  const after = await api.edit(id, file);
+  return { base: after ?? (await api.get(id)).markdown };
 }
 
 /**

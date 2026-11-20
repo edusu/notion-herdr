@@ -57,7 +57,7 @@ if (group === "pages" && cmd === "get") {
   p.markdown = body.replace(/_(\w+)_/g, "*$1*").trimEnd();
   state.edits = (state.edits ?? 0) + 1;
   save();
-  console.log(rest[0]);
+  console.log(rest.includes("--json") ? JSON.stringify({ object: "page_markdown", id: rest[0], markdown: p.markdown, truncated: false, unknown_block_ids: [] }) : rest[0]);
 } else if (group === "pages" && cmd === "create") {
   const content = flag("--content");
   const title = JSON.parse(/^---\ntitle: (.*)\n---\n/.exec(content)[1]);
