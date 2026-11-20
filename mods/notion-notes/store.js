@@ -17,6 +17,8 @@ export const mapPath = () => `${dir()}/map.json`;
 export const cachePath = (id) => `${dir()}/${id}.md`;
 export const metaPath = (id) => `${dir()}/${id}.json`;
 export const uploadPath = (id) => `${dir()}/${id}.upload.md`;
+/** The "Not saved" notice of a view that closed with it, for the next view that starts. */
+export const draftPath = () => `${dir()}/draft.txt`;
 
 export { validId } from "./notion.js";
 

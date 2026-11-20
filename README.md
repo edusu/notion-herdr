@@ -53,7 +53,7 @@ changes the note in the ways below; everything else needs Markdown. Read-only no
   - `↑` / `↓` save and move to the previous or next editable block.
   - If the block changed in Notion while open, the field stays open with **This block changed in
     Notion; copy your text or discard it** and a **Discard** button; nothing is overwritten. If
-    you switch note or close the panel then, the text is shown in a **Not saved** notice instead.
+    you switch note or close the panel then, the text is shown in a **Not saved** notice instead (after a close, in the next note view that starts).
   - If the text you type turns the block into one that spans the lines below (a ```` ``` ```` fence,
     a table row, a tag), `Enter` saves it and closes the field without adding a block.
 - **`/` menu**: typing `/` at the start of the field or after a space opens a menu of Text,
@@ -172,7 +172,8 @@ would reload the mod):
   read-only pages, which are always read from Notion);
 - `<page id>.json`: `{ base, title, url, pending, partial }`. `base` is Notion's markdown at the last read
   or upload; `pending` means local edits are not in Notion yet;
-- `<page id>.upload.md`: the text of the last upload.
+- `<page id>.upload.md`: the text of the last upload;
+- `draft.txt`: the **Not saved** notice of a view closed with a block that changed in Notion, emptied once a view shows it.
 
 ## Sync rules
 

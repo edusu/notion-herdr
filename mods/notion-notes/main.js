@@ -10,7 +10,7 @@ import { replaceBlock, appendedPage } from "./blocks.js";
 import { pickerMethods } from "./picker.js";
 import { ui, setSizes } from "./ui.js";
 import { readMethods, sourcesChanged, release } from "./read.js";
-import { NAME, MAP_REV, REFRESH_EVERY, dir, mapPath, cachePath, metaPath, uploadPath, spaceKey, spacePage, readJson, put, loadSettings, mapSpace } from "./store.js";
+import { NAME, MAP_REV, REFRESH_EVERY, dir, mapPath, cachePath, metaPath, uploadPath, draftPath, spaceKey, spacePage, readJson, put, loadSettings, mapSpace } from "./store.js";
 import * as fs from "fs/promises";
 
 const UPLOAD_AFTER = 3000;
@@ -88,6 +88,14 @@ class NotionNotes extends View {
     try { this.reading = localStorage.getItem("view") !== "edit"; } catch { this.reading = true; }
     this.setup.catch((e) => { this.errors.settings = `Settings in mod.json: ${e.message}`; cx.notify(); });
     cx.timer.every(800, (cx) => this.tick(cx));
+    // Emptied rather than removed once taken, so only one view shows it.
+    this.setup.then(() => this.disk(async () => {
+      const draft = await readTextFile(draftPath());
+      if (!draft) return;
+      await put(draftPath(), "");
+      this.errors.draft ??= draft;
+      cx.notify();
+    })).catch(() => {});
     if (this.mode === "pane") {
       if (validId(p.page)) this.open(p.page, cx);
       else this.errors.open = "Not a Notion page id";
@@ -498,6 +506,7 @@ class NotionNotes extends View {
     this.endEdit(undefined, true);
     // Released after the save: a view waiting for the note reads it from disk once it is free.
     try {
+      if (this.errors.draft) await this.disk(() => put(draftPath(), this.errors.draft)).catch(() => {});
       if (!this.dirty || !this.editor || !this.meta) return;
       // An upload does not fit in close's 250 ms: keep it pending for the next start.
       const id = this.page, m = this.meta, text = this.editor.value();
