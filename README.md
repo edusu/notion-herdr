@@ -114,7 +114,7 @@ the installed mod's settings. It exits 1 with one line when no note is mapped, s
 or `ntn` fails. For an agent prompt:
 
 ```sh
-printf '## Agent summary\n- what changed\n' | ~/ai/herdr/custom-mods/notion-herdr/bin/notion-note-append
+printf '## Agent summary\n- what changed\n' | /path/to/notion-herdr/bin/notion-note-append
 ```
 
 It refuses (exit 1) while the note has edits in Herdr not yet uploaded, so an append never
@@ -123,7 +123,7 @@ state, so typing from the last 0.8 s before the panel's next local save is not s
 case still ends at **Changed in Notion** in the panel, nothing is overwritten silently. An open note picks the
 appended text up on its next refresh.
 
-
+## Settings
 
 In the installed `mod.json`, under `settings`:
 
@@ -137,7 +137,8 @@ In the installed `mod.json`, under `settings`:
 
 ## What it runs
 
-Only `ntn`, with ids and titles passed as separate arguments, never inside a shell string:
+Only `ntn` (and `sh` to give it a file as stdin, and `open` for the Notion app), with ids and titles
+passed as separate arguments, never inside a shell string:
 
 - `ntn pages get <id> --json` to open or refresh a note and before each upload;
 - `ntn pages edit <id> --json` through `sh -c '"$1" pages edit "$2" --json < "$3"'` (exec has no stdin);
@@ -159,8 +160,8 @@ The header's open button runs `open notion://www.notion.so/<id>` (the Notion app
 fails it uses, for the rest of the session, `open` with the page's own https URL when it is on
 a notion.so/notion.site/notion.com domain, else `https://www.notion.so/<id>`.
 
-Uploads only follow edits: 3 s after typing stops, and when the panel switches note. There is
-no polling of Notion.
+Uploads only follow edits: 3 s after typing stops, and when the panel switches note. Reads
+follow the refresh rules in Sync rules (every 30 s while a note is shown).
 
 ## What it writes
 
@@ -214,6 +215,10 @@ would reload the mod):
 
 `node tests/self-check.mjs` runs the CLI parsing, upload ordering and conflict decision
 against `tests/fake-ntn.mjs`.
+
+## License
+
+Apache-2.0 (`LICENSE`).
 
 ## Credits
 

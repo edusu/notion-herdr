@@ -26,7 +26,7 @@ const exec = (cmd, args) => new Promise((resolve, reject) =>
 const write = async (path, text) => writeFileSync(path, text);
 const state = () => JSON.parse(readFileSync(stateFile, "utf8"));
 const reset = (s) => writeFileSync(stateFile, JSON.stringify(s));
-const ID = "418e82c3-1287-8154-94b3-fc5ad78fc192";
+const ID = "c0ffee00-1234-4abc-8def-0123456789ab";
 const file = join(tmp, "up.md");
 const api = client(exec, ntn);
 
@@ -70,12 +70,12 @@ test("picker rows carry title, last edit and the parent's name when the response
 });
 
 test("Open in Notion uses the app link, a Notion https URL, or one built from the id", () => {
-  const own = "https://app.notion.com/p/notion-herdr-test-418e82c31287815494b3fc5ad78fc192";
-  assert.equal(pageUrl(ID, own, true), "notion://www.notion.so/418e82c31287815494b3fc5ad78fc192");
+  const own = "https://app.notion.com/p/notion-herdr-test-c0ffee0012344abc8def0123456789ab";
+  assert.equal(pageUrl(ID, own, true), "notion://www.notion.so/c0ffee0012344abc8def0123456789ab");
   assert.equal(pageUrl(ID, own, false), own);
   assert.equal(pageUrl(ID, "https://acme.notion.site/Page-1", false), "https://acme.notion.site/Page-1");
   for (const bad of ["https://evil.example/notion.so", "http://www.notion.so/x", "file:///etc/passwd", "https://notion.so.evil.com/x", null])
-    assert.equal(pageUrl(ID, bad, false), "https://www.notion.so/418e82c31287815494b3fc5ad78fc192");
+    assert.equal(pageUrl(ID, bad, false), "https://www.notion.so/c0ffee0012344abc8def0123456789ab");
   assert.equal(pageUrl("../../etc", own, true), null);
 });
 
@@ -852,7 +852,7 @@ test("editParts gives blank and empty blocks an empty prefix, so typing replaces
 });
 
 test("editParts gives null for blocks that are not edited in place", () => {
-  for (const raw of ["> a\n> b", "```\ncode\n```", "| a |\n| - |", "---", "<callout>\nx\n</callout>", '<page url="https://notion.so/418e82c3128781d494b3fc5ad78fc192">T</page>']) {
+  for (const raw of ["> a\n> b", "```\ncode\n```", "| a |\n| - |", "---", "<callout>\nx\n</callout>", '<page url="https://notion.so/c0ffee0012344abc8def0123456789ac">T</page>']) {
     assert.equal(editParts(parseBlocks(raw)[0]), null, raw);
   }
   assert.equal(editParts(undefined), null);
