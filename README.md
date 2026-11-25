@@ -177,6 +177,9 @@ passed as separate arguments, never inside a shell string:
   `ntn api v1/pages/<id>/markdown -X PATCH -d <json>` with `insert_content` at the end (as `bin/notion-note-append`)
   for Move to of any other block.
 
+The header's link button copies the page's https URL (the one the open button falls back to), and its
+id with ⌘-click, so you can tell an agent with `ntn` which note you mean.
+
 The header's open button runs `open notion://www.notion.so/<id>` (the Notion app); if that
 fails it uses, for the rest of the session, `open` with the page's own https URL when it is on
 a notion.so/notion.site/notion.com domain, else `https://www.notion.so/<id>`.
@@ -249,4 +252,4 @@ Apache-2.0 (`LICENSE`).
 
 The save chain follows `tab-notes` from
 [ozcberkay/herdr-coban](https://github.com/ozcberkay/herdr-coban), Apache-2.0
-(`LICENSE-tab-notes`). `notes.svg`, `external-link.svg`, `refresh.svg` and `grip-vertical.svg` are Lucide's `file-text`, `external-link`, `refresh-cw` and `grip-vertical`, ISC (`mods/notion-notes/LICENSE-lucide`).
+(`LICENSE-tab-notes`). `notes.svg`, `external-link.svg`, `link.svg`, `refresh.svg` and `grip-vertical.svg` are Lucide's `file-text`, `external-link`, `link`, `refresh-cw` and `grip-vertical`, ISC (`mods/notion-notes/LICENSE-lucide`).

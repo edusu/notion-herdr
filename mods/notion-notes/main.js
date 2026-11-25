@@ -4,7 +4,7 @@
 // The save chain is adapted from tab-notes in ozcberkay/herdr-coban (Apache-2.0).
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Editor, EditorState, Input, InputState } from "gpui-base";
-import { exec, theme, settings, props, run, shared, layout, panes, focused, readTextFile } from "herdr";
+import { exec, theme, settings, props, run, shared, layout, panes, focused, readTextFile, notify } from "herdr";
 import { client, upload, serial, refreshDecision, pageUrl, validId, canonicalId } from "./notion.js";
 import { replaceBlock, appendedPage, withoutPage } from "./blocks.js";
 import { pickerMethods } from "./picker.js";
@@ -541,6 +541,14 @@ class NotionNotes extends View {
     this.open(id, cx, true);
   }
 
+  // Copies what tells an agent which note this is: its https URL, or the bare id when `idOnly`.
+  copyLink(idOnly, cx) {
+    const text = idOnly ? canonicalId(this.page) : pageUrl(this.page, this.meta?.url, false);
+    if (!text) return;
+    cx.write_to_clipboard(text);
+    notify({ title: idOnly ? "Page id copied" : "Link copied", body: text, level: "success", timeout: 2500 });
+  }
+
   openInNotion(cx, id = this.page, url = this.meta?.url) {
     cx.spawn(async (cx) => {
       try {
@@ -615,7 +623,7 @@ class NotionNotes extends View {
     const button = (id, label, primary, action) => h_flex().id(id).h(ui.size.button).px(10).items_center().rounded(6).flex_none()
       .border_1().border_color(primary ? t.solid : t.input).bg(primary ? t.solid : t.raised)
       .text_color(primary ? t.solid_foreground : t.foreground).text_size(ui.text.small).cursor_pointer()
-      .hover((s) => s.opacity(0.88)).on_click((_e, cx) => action(cx)).child(label);
+      .hover((s) => s.opacity(0.88)).on_click((e, cx) => action(cx, e)).child(label);
     // The editor state stays alive while reading, so cursor and undo survive the switch.
     const body = this.reading && this.editor ? this.renderRead(cx)
       : this.editor ? Editor.new(this.editor).flex_1().min_h(0).p(6)
@@ -640,6 +648,7 @@ class NotionNotes extends View {
         .when(Boolean(this.editor), (el) => el
           .when(pane, (el) => el.child(button("nn-to-panel", "To panel", false, (cx) => this.toPanel(cx))))
           .child(button("nn-view", this.reading ? "Markdown" : "Read", false, (cx) => this.toggleView(cx)))
+          .child(button("nn-copy", svg(`mods/${NAME}/link.svg`).size(ui.size.icon).text_color(t.foreground), false, (cx, e) => this.copyLink(Boolean(e.modifiers?.platform), cx)).px(6))
           .child(button("nn-notion", svg(`mods/${NAME}/external-link.svg`).size(ui.size.icon).text_color(t.foreground), false, (cx) => this.openInNotion(cx)).px(6))))
       .when(Boolean(error), (el) => el.child(div().px(14).py(6).text_size(ui.text.tiny).text_color(t.ansi1).child(error)))
       .when(Boolean(this.conflict), (el) => el.child(h_flex().px(14).py(8).gap(8).items_center().bg(t.raised).border_b(1).border_color(t.border)
