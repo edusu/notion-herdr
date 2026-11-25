@@ -2,6 +2,7 @@
 // A stand-in for `ntn` that keeps pages in $FAKE_NTN_STATE (JSON). It strips a leading
 // frontmatter block on edit and rewrites `_x_` to `*x*`, as the real CLI does. Creating a page under
 // a parent appends its `<page>` tag as the parent's last line, and an edit that drops a tag is refused.
+// Trashing or moving a subpage takes its tag out of its parent (and moving appends it to the new one).
 import { readFileSync, writeFileSync } from "node:fs";
 
 const file = process.env.FAKE_NTN_STATE;
@@ -31,6 +32,13 @@ const fill = (s, props) => Object.fromEntries(Object.entries(props).map(([name, 
   return [key, { id: col.id, type: col.type, [col.type]: stored(col, col.type, body[col.type]) }];
 }));
 const stripFrontmatter = (s) => s.replace(/^---\n[\s\S]*?\n?---\n/, "");
+const tagOf = (id, p) => `<page url="https://app.notion.com/p/${id.replace(/-/g, "")}">${p.title}</page>`;
+const append = (p, line) => { p.markdown = p.markdown ? `${p.markdown}\n${line}` : line; };
+// Takes page `id`'s tag out of its parent's markdown.
+const detach = (id) => {
+  const mother = state.pages[state.pages[id].parent?.replace(/^page:/, "")];
+  if (mother) mother.markdown = mother.markdown.split("\n").filter((l) => l !== tagOf(id, state.pages[id])).join("\n");
+};
 
 if (state.fail) fail(state.fail);
 const [group, cmd, ...rest] = process.argv.slice(2);
@@ -65,10 +73,7 @@ if (group === "pages" && cmd === "get") {
   const parent = flag("--parent");
   state.pages[id] = { title, markdown: "", parent };
   const mother = state.pages[parent?.replace(/^page:/, "")];
-  if (mother) {
-    const tag = `<page url="https://app.notion.com/p/${id.replace(/-/g, "")}">${title}</page>`;
-    mother.markdown = mother.markdown ? `${mother.markdown}\n${tag}` : tag;
-  }
+  if (mother) append(mother, tagOf(id, state.pages[id]));
   save();
   console.log(JSON.stringify(page(id, state.pages[id])));
 } else if (group === "datasources" && cmd === "query" && state.sources?.[rest[0]]) {
@@ -83,6 +88,26 @@ if (group === "pages" && cmd === "get") {
   p.markdown = `${p.markdown}\n${body.insert_content.content.trimEnd()}`;
   save();
   console.log(JSON.stringify({ object: "page_markdown", id, markdown: p.markdown, truncated: false, unknown_block_ids: [] }));
+} else if (group === "api" && /^v1\/pages\/[^/]+$/.test(cmd) && !rest.includes("-X") && !rest.includes("-d")) {
+  const id = cmd.split("/")[2], p = state.pages[id];
+  if (!p || p.in_trash) fail(`Could not find page with ID: ${id}`);
+  const mother = p.parent?.startsWith("page:") ? p.parent.slice(5) : null;
+  console.log(JSON.stringify({ ...page(id, p), parent: mother ? { type: "page_id", page_id: mother } : { type: "workspace", workspace: true } }));
+} else if (group === "api" && /^v1\/pages\/[^/]+$/.test(cmd) && flag("-X") === "PATCH" && JSON.parse(flag("-d")).in_trash === true) {
+  const id = cmd.split("/")[2];
+  if (!state.pages[id]) fail(`Could not find page with ID: ${id}`);
+  detach(id);
+  state.pages[id].in_trash = true;
+  save();
+  console.log(JSON.stringify({ object: "page", id, in_trash: true }));
+} else if (group === "api" && /^v1\/pages\/[^/]+\/move$/.test(cmd) && !rest.includes("-X")) {
+  const id = cmd.split("/")[2], body = JSON.parse(flag("-d")), to = state.pages[body.parent?.page_id];
+  if (!state.pages[id] || !to || body.parent.type !== "page_id") fail(`Could not find page with ID: ${id}`);
+  detach(id);
+  state.pages[id].parent = `page:${body.parent.page_id}`;
+  append(to, tagOf(id, state.pages[id]));
+  save();
+  console.log(JSON.stringify({ object: "page", id }));
 } else if (group === "api" && /^v1\/pages\/[^/]+$/.test(cmd) && flag("-X") === "PATCH") {
   const id = cmd.split("/")[2], s = Object.values(state.sources ?? {}).find((x) => x.rows.some((r) => r.id === id));
   const body = JSON.parse(flag("-d")), title = body.properties?.title?.title;

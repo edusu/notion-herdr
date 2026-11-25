@@ -82,8 +82,8 @@ function link(t, name) {
   return { attrs: m[1], url, title: m[2], id: canonicalId(hex) };
 }
 
-// Elements that never have a closing tag; without this `<br>` would swallow the rest of the note.
-const VOID = new Set(["br", "hr", "img", "input", "wbr"]);
+// Elements that never have a closing tag; without this `<img>` would swallow the rest of the note.
+const VOID = new Set(["hr", "img", "input", "wbr"]);
 
 // Last line of the element opened on line `i`: open and close tags of the same name are
 // counted, so a nested `<details>` does not end the outer one early. Tags inside fenced code
@@ -126,7 +126,8 @@ function block(lines, i) {
   if ((m = link(t, "database"))) {
     return ["database", i, { url: m.url, title: m.title, id: m.id, source: canonicalId(SOURCE_ATTR.exec(m.attrs)?.[1]) }];
   }
-  if ((m = /^<([A-Za-z][A-Za-z0-9-]*)(?=[\s/>]|$)/.exec(t))) {
+  // A line that starts with Notion's `<br>` line break is a paragraph whose text starts on a new line.
+  if ((m = /^<([A-Za-z][A-Za-z0-9-]*)(?=[\s/>]|$)/.exec(t)) && m[1].toLowerCase() !== "br") {
     return ["raw", VOID.has(m[1]) ? i : tagEnd(lines, i, m[1]), { tag: m[1] }];
   }
   if (/^(---|\*\*\*|___)$/.test(t)) return ["divider", i, {}];
@@ -264,6 +265,14 @@ export function editParts(block) {
   return { prefix: block.raw.slice(0, block.raw.length - text.length), text };
 }
 
+const BR = /<br\s*\/?>/gi;
+
+/** A block's text with Notion's `<br>` line breaks as newlines, as the edit field holds it. */
+export const fromBreaks = (text) => text.replace(BR, "\n");
+
+/** The edit field's text as one markdown line again: each newline becomes Notion's `<br>`. */
+export const toBreaks = (value) => value.replace(/\r?\n/g, "<br>");
+
 /** The closest block before (`step` -1) or after (1) line `from` that `editParts` accepts, or undefined. */
 export function nextEditable(blocks, from, step) {
   return step < 0 ? blocks.findLast((b) => b.from < from && editParts(b)) : blocks.find((b) => b.from > from && editParts(b));
@@ -321,6 +330,24 @@ export function appendedPage(remote, base, id) {
   const line = remote.slice(base.length + sep.length);
   const want = canonicalId(id);
   return want && link(line, "page")?.id === want ? line : null;
+}
+
+/** `text` without the top-level `<page>` line of page `id`; `text` itself when it has none. */
+export function withoutPage(text, id) {
+  const want = canonicalId(id), b = parseBlocks(text).find((x) => x.type === "page" && x.id === want);
+  return b ? replaceBlock(text, b, null) : text;
+}
+
+/**
+ * What the block menu offers for a top-level block, as booleans: `turn` (Turn into) for the one-line
+ * text blocks `retype` takes, `open` for a page, `delete` for a page or any block holding no page or
+ * database tag, `duplicate` and `move` for blocks holding none and not blank (a copied tag would
+ * not copy its page). A page moves itself, so it also gets `move`. A database gets nothing.
+ */
+export function blockActions(block) {
+  const page = block.type === "page" && Boolean(block.id), holds = /<(page|database)[\s>]/.test(block.raw);
+  const text = !holds && block.type !== "blank" && block.type !== "empty";
+  return { open: page, turn: ONE_LINE.has(block.type) && block.from === block.to, duplicate: text, move: page || text, delete: page || !holds };
 }
 
 /**

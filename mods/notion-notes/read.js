@@ -1,14 +1,16 @@
 // The read view: the note drawn block by block from parseBlocks. It only changes text through
-// toggleTodo, moveBlock and the open block's write-back on the editor, so uploads still send the editor's text and never one rebuilt from blocks.
+// toggleTodo, moveBlock, the block menu and the open block's write-back on the editor, so uploads still send the editor's text and never one rebuilt from blocks.
 import { div, svg } from "gpui-kit";
-import { v_flex, h_flex, Checkbox, Collapsible, TextView, Input, InputState, Popup } from "gpui-base";
-import { theme, run } from "herdr";
+import { v_flex, h_flex, Checkbox, Collapsible, TextView, Input, InputState, Textarea, TextareaState, Popup } from "gpui-base";
+import { theme, run, openOverlay } from "herdr";
 import { NAME, REFRESH_EVERY } from "./store.js";
 import { ui } from "./ui.js";
 import { readable } from "./notion.js";
-import { parseBlocks, children, toggleTodo, cell, replaceBlock, insertAfter, moveBlock, retype, continuation, editParts, nextEditable, slashQuery, commands, editableCell } from "./blocks.js";
+import { parseBlocks, children, toggleTodo, cell, replaceBlock, insertAfter, moveBlock, retype, continuation, editParts, nextEditable, slashQuery, commands, editableCell, fromBreaks, toBreaks, blockActions } from "./blocks.js";
 
 const INDENT = 18;
+// The open field grows with its wrapped lines up to this many, then scrolls.
+const FIELD_ROWS = 100;
 
 // Notion colour name → Herdr theme token; anything else is muted.
 const TAG_COLORS = { red: "ansi1", green: "ansi2", yellow: "ansi3", blue: "ansi4", purple: "ansi5", pink: "ansi13", orange: "ansi11", brown: "ansi3" };
@@ -29,12 +31,16 @@ const tag = (t, text, color) => {
 // One TextView per block keeps bold, code and links working. Ids are the block's first line,
 // which stays unique and stable while a to-do is toggled.
 const md = (id, source) => TextView.markdown(id, source).selectable(true);
+// A text block's Notion `<br>` drawn as a markdown hard line break.
+const breaks = (s) => fromBreaks(s).replace(/\n/g, "  \n");
 
 const HEADING_TEXT = [null, "title", "h2", "h3"];
 const LISTS = new Set(["bullet", "numbered", "todo"]);
 // Enter and Backspace on an empty field of these types turn it into a paragraph first.
 const LEAVES_TYPE = new Set([...LISTS, "heading", "quote"]);
 const sameBlock = (a, b) => a.from === b.from && a.raw === b.raw;
+// The block menu's Turn into entries: the `/` menu's types, without Divider and Page.
+const TYPES = commands("").filter((c) => c.id !== "divider" && c.id !== "page");
 // Released late because closing can run inside the state's own submit or blur event.
 export const release = (state, cx) => (cx ? cx.timer.after(300, () => state.release()) : state.release());
 const menuBox = (id, w, t) => v_flex().id(id).w(w).p(4).gap(1).rounded(8).border_1().border_color(t.border).bg(t.popover);
@@ -64,16 +70,18 @@ export const readMethods = {
     return Boolean(this.editing) && sameBlock(this.editing.block, block);
   },
 
-  // Opens `block` in a field that holds only its text. The caller has closed the previous block.
+  // Opens `block` in a field that holds only its text, its `<br>` as newlines. The caller has closed the previous block.
   startEdit(block, cx, atEnd = false) {
     const parts = editParts(block);
     if (!parts || this.meta.readonly) return;
-    const state = InputState.new({ value: parts.text });
+    const text = fromBreaks(parts.text), state = TextareaState.new({ value: text });
+    state.set_auto_grow(1, FIELD_ROWS);
     // Only the open block reacts: a state that was just closed may still deliver its blur.
     state.on("blur", (_e, cx) => { if (this.editing?.state === state) this.endEdit(cx); });
     // Enter reaches submit after the wrapper's key handler, so an open menu is settled here.
-    state.on("submit", (_e, cx) => {
-      if (this.editing?.state !== state) return;
+    // Shift-Enter is the field's own line break: a submit it may also send must not start a block.
+    state.on("submit", (e, cx) => {
+      if (this.editing?.state !== state || e?.shift) return;
       const pick = this.menu()[this.editing.slash?.at];
       if (pick) this.command(pick.id, cx); else this.enter(cx);
       cx.notify();
@@ -90,9 +98,9 @@ export const readMethods = {
     });
     this.fieldFocus ??= cx.focus_handle();
     this.errors.draft = null;
-    this.editing = { block, state, ...parts, stale: false, last: parts.text, slash: null };
+    this.editing = { block, state, ...parts, text, stale: false, last: text, slash: null };
     state.focus();
-    if (atEnd) state.set_selected_range({ start: parts.text.length, end: parts.text.length });
+    if (atEnd) state.set_selected_range({ start: text.length, end: text.length });
   },
 
   // Puts the line a click below the note opened into the note, on the first key typed in it.
@@ -111,11 +119,11 @@ export const readMethods = {
     release(ed.state, cx);
   },
 
-  // The raw line the open field stands for; a single line, and the block's own raw when untouched.
+  // The raw line the open field stands for: one line, its newlines written as `<br>`, and the block's own raw when untouched.
   draft() {
     const { block, state, prefix, text } = this.editing;
-    const value = state.value().replace(/\r?\n/g, " ");
-    return value === text ? block.raw : prefix + value;
+    const value = state.value();
+    return value === text ? block.raw : prefix + toBreaks(value);
   },
 
   // Puts the note's new text into the editor. A null `next` means the open block is stale:
@@ -178,10 +186,10 @@ export const readMethods = {
     const clean = value.slice(0, slash.start) + value.slice(end);
     state.set_value(clean);
     this.editing.slash = null;
-    const text = clean.replace(/\r?\n/g, " ");
+    const text = toBreaks(clean);
     if (id === "page") {
       this.closeEdit(cx);
-      return this.createPage(block, text.trim() || "Untitled", cx);
+      return this.createPage(block, clean.replace(/\r?\n/g, " ").trim() || "Untitled", cx);
     }
     if (id !== "divider") return this.swap(retype(prefix + text, id), cx);
     // `---` under a text line would read as a setext heading. write("***\n") leaves an empty line below the divider; that line is the one that opens.
@@ -216,7 +224,8 @@ export const readMethods = {
   },
 
   fieldKey(e, cx) {
-    // Enter is left to the field's submit event. Backspace and Delete only arrive here when the field is empty.
+    // Enter is left to the field's submit event. Backspace and Delete only arrive here when the field is empty, and
+    // ↑ / ↓ when the field has no line of its own to move to.
     const n = this.menu().length, slash = this.editing.slash;
     switch (e.keystroke) {
       case "escape": if (n) this.editing.slash = null; else { this.endEdit(cx); return; } break;
@@ -252,8 +261,8 @@ export const readMethods = {
   field(t, size) {
     const ed = this.editing, items = this.menu();
     return v_flex().flex_1().min_w(0).gap(2)
-      .child(Popup.new("nn-slash", h_flex().id("nn-field").track_focus(this.fieldFocus).on_key_down((e, cx) => this.fieldKey(e, cx))
-        .child(Input.new(ed.state).flex_1().text_size(size).text_color(t.foreground))).anchor("bottom_left")
+      .child(Popup.new("nn-slash", h_flex().id("nn-field").w_full().min_w(0).track_focus(this.fieldFocus).on_key_down((e, cx) => this.fieldKey(e, cx))
+        .child(Textarea.new(ed.state).flex_1().min_w(0).text_size(size).text_color(t.foreground))).anchor("bottom_left").w_full().min_w(0)
         .when(items.length > 0, (el) => el.content(menuBox("nn-menu", ui.size.menu, t)
           .children(items.map((c, i) => menuRow(`nn-cmd-${c.id}`, i === ed.slash.at, t).text_size(ui.text.small).text_color(t.foreground)
             .on_click((_e, cx) => { this.command(c.id, cx); cx.notify(); }).child(c.label))))))
@@ -374,10 +383,12 @@ export const readMethods = {
   },
 
   // A press on a block's handle starts dragging it; the open field is saved first, as a click on another block does.
+  // `menu`: a release in place opens the block menu, unless this same press just closed it.
   startDrag(block, cx) {
     cx.stop_propagation();
     if (!this.endEdit(cx)) return;
-    this.drag = { block: this.blocks().find((b) => b.from === block.from) ?? block, before: null, text: this.editor.value() };
+    const menu = !(this.menuClosed?.id === `nn-bm-${block.from}` && Date.now() - this.menuClosed.at < 400);
+    this.drag = { block: this.blocks().find((b) => b.from === block.from) ?? block, before: null, text: this.editor.value(), menu };
     // Escape reaches the read view only while it holds the keyboard.
     (this.readFocus ??= cx.focus_handle()).focus();
     cx.notify();
@@ -399,7 +410,44 @@ export const readMethods = {
     const text = this.editor?.value();
     const next = drop && d.before !== null && text === d.text && !this.meta?.readonly && !this.creating ? moveBlock(text, d.block, d.before) : null;
     if (next !== null && next !== text) this.setText(next);
+    // Released with no other drop position on the way: a click, which opens the menu.
+    else if (drop && d.menu && text === d.text && (d.before === null || next === text) && Object.values(blockActions(d.block)).some(Boolean)) {
+      this.blockMenu = { block: d.block };
+    }
     cx.notify();
+  },
+
+  // Closes the block menu and runs `fn` on the block as the text holds it now: nothing when a refresh replaced it.
+  fromMenu(block, fn) {
+    this.blockMenu = null;
+    const cur = this.blocks().find((b) => sameBlock(b, block));
+    if (cur && !this.meta.readonly && !this.creating) fn(cur, this.editor.value());
+  },
+
+  // Move to: the picker chooses the page and answers through MOVE_TO under this request's token (tick() takes it).
+  pickTarget(block) {
+    this.moveReq = { token: `${this.page}:${Date.now()}`, block, m: this.meta };
+    openOverlay({ mod: NAME, kind: "dialog", width: 620, props: { move: this.moveReq.token, from: this.page } });
+  },
+
+  // The handle's menu. Turn into swaps the entries for the types; Delete on a page asks once more, since it trashes a subpage.
+  renderBlockMenu(b, t) {
+    const bm = this.blockMenu, can = blockActions(b);
+    const item = (id, label, act, color = t.foreground) => menuRow(`nn-bm-${id}`, false, t).text_size(ui.text.small).text_color(color)
+      .on_click((_e, cx) => { act(cx); cx.notify(); }).child(label);
+    const edit = (fn) => () => this.fromMenu(b, (cur, text) => this.setText(fn(text, cur)));
+    const items = bm.turn ? TYPES.map((c) => item(c.id, c.label, edit((text, cur) => replaceBlock(text, cur, retype(cur.raw, c.id))))) : [
+      can.open && item("open", "Open", (cx) => this.fromMenu(b, (cur) => this.openPage(cur.id, cur.url, {}, cx))),
+      can.turn && item("turn", "Turn into ›", () => { bm.turn = true; }),
+      can.duplicate && item("duplicate", "Duplicate", edit((text, cur) => insertAfter(text, cur, cur.raw))),
+      can.move && item("move", "Move to…", () => this.fromMenu(b, (cur) => this.pickTarget(cur))),
+      can.delete && (b.type !== "page" ? item("delete", "Delete", edit((text, cur) => replaceBlock(text, cur, null)))
+        : bm.confirm ? item("confirm", "Delete page?", (cx) => this.fromMenu(b, (cur) => this.detachPage(cur, null, cx)), t.ansi1)
+        : item("delete", "Delete", () => { bm.confirm = true; })),
+    ].filter(Boolean);
+    return menuBox("nn-block-menu", ui.size.menu, t)
+      .on_mouse_down_out((_e, cx) => { this.menuClosed = { id: `nn-bm-${b.from}`, at: Date.now() }; this.blockMenu = null; cx.notify(); })
+      .children(items);
   },
 
   // The rows under a database's title: the table, "Loading…" or the read error. Draws from the
@@ -475,7 +523,7 @@ export const readMethods = {
       // A text cell opens its block for editing on click; while open, the field takes its place.
       const inPlace = (view, size = ui.text.body) => this.isEditing(block) ? this.field(t, size)
         : editable ? view.id(`nn-e-${block.from}`).on_click((e, cx) => this.editBlock(block, e, cx)) : view;
-      if (this.creating && sameBlock(this.creating, block)) return pad(0).child(div().text_color(t.muted).child("Creating page…"));
+      if (this.creating && sameBlock(this.creating, block)) return pad(0).child(div().text_color(t.muted).child(this.creating.busy ?? "Creating page…"));
       switch (block.type) {
         case "todo": {
           const on = block.done;
@@ -486,17 +534,17 @@ export const readMethods = {
               .when(!ro, (el) => el.cursor_pointer())
               .when(on, (el) => el.child(div().text_size(ui.text.tiny).text_color(t.accent_foreground).child("✓"))))
             .when(Boolean(block.label) || editable, (el) => el.child(inPlace(div().flex_1().min_w(0).min_h(ui.size.line).text_color(on ? t.dim : t.foreground)
-              .when(Boolean(block.label), (d) => d.child(md(id, on ? `~~${block.label}~~` : block.label))))));
+              .when(Boolean(block.label), (d) => d.child(md(id, on ? `~~${breaks(block.label)}~~` : breaks(block.label)))))));
         }
         case "bullet":
         case "numbered":
           return pad(block.depth).gap(6)
             .child(div().flex_none().text_color(t.muted).child(block.type === "bullet" ? "•" : block.marker))
-            .child(inPlace(div().flex_1().min_w(0).min_h(ui.size.line).child(md(id, block.text))));
+            .child(inPlace(div().flex_1().min_w(0).min_h(ui.size.line).child(md(id, breaks(block.text)))));
         case "paragraph":
-          return pad(block.depth).child(inPlace(div().flex_1().min_w(0).child(md(id, block.text))));
+          return pad(block.depth).child(inPlace(div().flex_1().min_w(0).child(md(id, breaks(block.text)))));
         case "quote":
-          return div().flex_none().border_l(2).border_color(t.border).pl(10).text_color(t.muted).child(inPlace(div().min_w(0).child(md(id, block.text))));
+          return div().flex_none().border_l(2).border_color(t.border).pl(10).text_color(t.muted).child(inPlace(div().min_w(0).child(md(id, breaks(block.text)))));
         case "code":
           return div().flex_none().rounded(6).bg(t.raised).p(8).child(md(id, block.raw));
         case "divider":
@@ -518,7 +566,7 @@ export const readMethods = {
         case "blank":
           return pad(0).child(inPlace(div().flex_1().h(8)));
         case "heading":
-          return pad(0).child(inPlace(div().flex_1().min_w(0).child(md(id, block.raw)), ui.text[HEADING_TEXT[block.level]]));
+          return pad(0).child(inPlace(div().flex_1().min_w(0).child(md(id, breaks(block.raw))), ui.text[HEADING_TEXT[block.level]]));
         default: {
           const inner = children(block);
           if (!inner) return md(id, readable(block.raw));
@@ -537,22 +585,23 @@ export const readMethods = {
         }
       }
     };
-    const blocks = this.blocks(), ed = this.editing, d = this.drag, last = blocks.at(-1);
+    const blocks = this.blocks(), ed = this.editing, d = this.drag, bm = this.blockMenu, last = blocks.at(-1);
     const handles = !ro && !this.creating;
     // The gap the dragged block would land in; none while it would stay where it is.
     const gap = d && d.before !== null && (d.before < d.block.from || d.before > d.block.to + 1) ? d.before : null;
-    // Each top-level block sits beside a gutter holding its drag handle, shown while the pointer is on the row.
-    const grip = (b, el) => h_flex().id(`nn-g-${b.from}`).relative().flex_none().items_start()
+    // Each top-level block sits beside a gutter holding its drag handle, shown while the pointer is on the row or its menu is open.
+    const grip = (b, el, menu = Boolean(bm) && sameBlock(bm.block, b)) => h_flex().id(`nn-g-${b.from}`).relative().flex_none().items_start()
       .on_hover((on, cx) => {
         const h = on ? b.from : this.hoverBlock === b.from ? null : this.hoverBlock;
         if (h !== this.hoverBlock) { this.hoverBlock = h; cx.notify(); }
       })
       .on_mouse_move((e, cx) => this.dragTo(e.local_position.y < e.bounds.height / 2 ? b.from : b.to + 1, cx))
       .when(d?.block.from === b.from, (r) => r.opacity(0.4))
-      .child(div().id(`nn-h-${b.from}`).flex_none().w(ui.size.grip).h(ui.size.line).flex().items_center().justify_center().cursor_grab()
-        .when(!handles || (this.hoverBlock !== b.from && d?.block.from !== b.from), (h) => h.invisible())
+      .child(Popup.new(`nn-hp-${b.from}`, div().id(`nn-h-${b.from}`).flex_none().w(ui.size.grip).h(ui.size.line).flex().items_center().justify_center().cursor_grab()
+        .when(!handles || (this.hoverBlock !== b.from && d?.block.from !== b.from && !menu), (h) => h.invisible())
         .when(handles, (h) => h.on_mouse_down("left", (_e, cx) => this.startDrag(b, cx)))
-        .child(svg(`mods/${NAME}/grip-vertical.svg`).size(ui.size.icon).text_color(t.muted)))
+        .child(svg(`mods/${NAME}/grip-vertical.svg`).size(ui.size.icon).text_color(t.muted))).anchor("bottom_left").flex_none()
+        .when(handles && menu, (p) => p.content(this.renderBlockMenu(b, t))))
       .child(v_flex().flex_1().min_w(0).child(el))
       .when(gap === b.from || (b === last && gap === b.to + 1), (r) => r.child(div().absolute().left(0).right(0).h(2).bg(t.accent)
         .when(gap === b.from, (l) => l.top(-3)).when(gap !== b.from, (l) => l.bottom(-3))));
@@ -566,11 +615,14 @@ export const readMethods = {
         .when(!ed && this.parsedText === "", (el) => el.child("Click to write")));
     }
     return v_flex().id("nn-read").flex_1().min_h(0).overflow_y_scrollbar().px(14).py(10).gap(4)
-      // A release anywhere in the list ends the drag; leaving the list or Escape cancels it.
+      // A release anywhere in the list ends the drag; leaving the list or Escape cancels it. Escape also closes the block menu.
       .on_mouse_up("left", (_e, cx) => this.endDrag(true, cx))
       .on_hover((on, cx) => { if (!on) this.endDrag(false, cx); })
-      .when(Boolean(d), (el) => el.cursor_grabbing().track_focus(this.readFocus)
-        .on_key_down((e, cx) => { if (e.keystroke === "escape") this.endDrag(false, cx); }))
+      .when(Boolean(d), (el) => el.cursor_grabbing())
+      .when(Boolean(d || bm), (el) => el.track_focus(this.readFocus).on_key_down((e, cx) => {
+        if (e.keystroke !== "escape") return;
+        if (d) this.endDrag(false, cx); else { this.blockMenu = null; cx.notify(); }
+      }))
       .children(rows);
   },
 

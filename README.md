@@ -39,18 +39,21 @@ switches to **Markdown**, the note's plain markdown text, and back (the choice i
 changes the note in the ways below; everything else needs Markdown. Read-only notes cannot be changed in Read.
 
 - **Text blocks**: click a paragraph, heading, bullet, numbered item, to-do, one-line quote or empty
-  line to edit it in a one-line field that holds only its text (the `#`, `-`, `1.` or `> ` stays
-  outside the field). Any click on the block opens the field, including one on a link in its text
+  line to edit it in a field that holds only its text (the `#`, `-`, `1.` or `> ` stays
+  outside the field). The field wraps long text and grows with it, as the block reads. Any click on the block opens the field, including one on a link in its text
   or a drag to select it; ⌘-click is left alone; change a link's URL in Markdown. The field saves when it loses focus or you press `Esc`;
   the edit then uploads like any other (see Sync rules).
   - `Enter` saves and starts a new block below, continuing a bullet, numbered or to-do list; on an
     empty list item it turns the item into a paragraph.
+  - `Shift+Enter` adds a line break inside the block. Notion's markdown writes it as `<br>` within the
+    block's one line; Read draws it as a line break and the field shows it as a new line.
   - `Backspace` on an empty field turns a list item, heading or quote into a paragraph, and
     deletes an empty paragraph, moving into the end of the block above.
   - A click in the space below the last block writes at the end of the note. The new line is only
     added once you type, and taken out again if you leave it empty, so a click alone changes
     nothing. An empty note shows **Click to write** there.
-  - `↑` / `↓` save and move to the previous or next editable block.
+  - `↑` / `↓` save and move to the previous or next editable block once the field has no line of its own
+    to move to (on its first or last line).
   - If the block changed in Notion while open, the field stays open with **This block changed in
     Notion; copy your text or discard it** and a **Discard** button; nothing is overwritten. If
     you switch note or close the panel then, the text is shown in a **Not saved** notice instead (after a close, in the next note view that starts).
@@ -75,12 +78,24 @@ changes the note in the ways below; everything else needs Markdown. Read-only no
   item moves alone, keeping its indentation, without its sub-items. A drop that would join two
   quotes or two tables into one does nothing. A `---` divider left right under a paragraph is written `***`, since `---` there would make the paragraph a heading. The list does not scroll by itself while dragging.
   Pressing a handle saves an open field first. No handles in read-only notes or while a subpage is
-  being created.
+  being created, deleted or moved.
+- **Block menu**: a click on the handle (press and release without reaching another drop position)
+  opens a menu under it; `Esc` or a click outside closes it. It offers what applies to the block:
+  - **Open** (a page): opens it in a pane to the right, as a click on it does.
+  - **Turn into**: Text, Heading 1-3, To-do, Bulleted list, Numbered list or Quote, for the one-line text blocks.
+  - **Duplicate**: a copy right below. Not for pages, databases or blocks that hold one (a copied tag would not copy the page).
+  - **Move to…**: opens the picker to choose another page (not this one). A block's markdown is appended at the end of that page
+    first, and only once Notion took it is the block taken out of this note, so a failure can leave a copy but never loses
+    the text. A subpage of this note is moved there by Notion itself; a link to a page that lives elsewhere is refused with an error.
+    It refuses while the target page has edits in Herdr not yet uploaded, as `bin/notion-note-append` does.
+  - **Delete**: removes the block's lines. On a page it first asks **Delete page?**; the second click moves a subpage of
+    this note to Notion's trash (restore it from there), while a link to a page elsewhere only loses its line.
+    Databases and blocks holding a page or database are not offered Delete: Notion refuses an upload that drops them.
 - **Callouts and toggles**: callouts are drawn as boxes with their icon and toggles as collapsible
   sections (their open state is not remembered, and is kept by line: adding lines above an open
   toggle can open another one instead). Their to-dos can be ticked; their other text is
   shown but not editable in Read. One whose tags share a line with text falls back to plain markdown.
-- **Subpages**: click opens the page in a pane to the right, ⌘-click opens it in Notion.
+- **Subpages**: click opens the page in a pane to the right, ⌘-click opens it in Notion. Delete or move one from its block menu.
 - **Inline databases**: a table of the first 50 rows, title column first and then the schema's order
   (the API does not give a view's column order, so filters, sorting and hidden columns of the
   Notion view are not applied). Click a row to open it in a pane to the right, ⌘-click for Notion.
@@ -99,8 +114,9 @@ changes the note in the ways below; everything else needs Markdown. Read-only no
   - A cell is drawn dimmed until Notion confirms the write, then the table is read again; an error
     shows under its row.
 
-Still needs Markdown: code blocks, multi-line quotes, dividers, tables, the text inside callouts and
-toggles, other tags (columns...) and selecting text across blocks. Columns, simple tables and
+Still needs Markdown: editing code blocks, quotes written over several `>` lines, dividers and tables (the block menu
+can still delete, duplicate or move them), the text inside callouts and toggles, other tags (columns...), deleting a
+database, and selecting text across blocks. Columns, simple tables and
 other tags show as the plain markdown fallback, with child pages and databases inside them as links.
 
 ## Appending from an agent
@@ -154,7 +170,12 @@ passed as separate arguments, never inside a shell string:
   sources, to name database parents in picker rows (failure is silent; rows show without it).
 - `ntn api v1/pages/<id> -X PATCH -d <json>` to write one cell of a database row or rename the
   open page (its `title` property), and
-  `ntn api v1/pages -d <json>` (POST) to add a row with its title.
+  `ntn api v1/pages -d <json>` (POST) to add a row with its title;
+- for the block menu: `ntn api v1/pages/<id>` to check that a page block is a subpage of this note (its `parent`),
+  `ntn api v1/pages/<id> -X PATCH -d <json>` with `in_trash: true` to delete it (to Notion's trash),
+  `ntn api v1/pages/<id>/move -d <json>` (POST) to move it under another page, and
+  `ntn api v1/pages/<id>/markdown -X PATCH -d <json>` with `insert_content` at the end (as `bin/notion-note-append`)
+  for Move to of any other block.
 
 The header's open button runs `open notion://www.notion.so/<id>` (the Notion app); if that
 fails it uses, for the rest of the session, `open` with the page's own https URL when it is on
@@ -205,9 +226,13 @@ would reload the mod):
   appends the new `<page>` line to it), then uploads the note with the block replaced by that
   link, which moves the line into place. If the parent changed in some other way meanwhile, `base`
   is left alone and the upload reports the conflict.
+- Deleting or moving a subpage from the block menu runs the same way: Notion trashes or moves the page, the parent is
+  read again and taken as `base` when Notion only dropped that page's `<page>` line, then the note uploads without the
+  line. If the parent changed in some other way meanwhile, `base` is left alone and the upload reports the conflict
+  (Reload is then safe: the page is already gone from the parent).
 - Cell edits and new rows go straight to Notion through the API. They are not part of the page
   upload or its conflict check, and the last write wins.
-- A refresh does not apply while a block is open for editing or a subpage is being created.
+- A refresh does not apply while a block is open for editing or a subpage is being created, deleted or moved.
 - A note starting with `---` is uploaded behind an empty frontmatter block, because
   `ntn pages edit` strips a leading frontmatter.
 

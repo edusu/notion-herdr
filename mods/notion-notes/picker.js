@@ -1,10 +1,11 @@
 // The picker dialog: pages of the default data source, or workspace search while typing,
 // and a last "Create" row. Enter opens in the panel, cmd-Enter in a pane to the right.
+// Opened with props.move (a block's Move to) it only lists pages and answers through MOVE_TO.
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, ScrollHandle } from "gpui-base";
-import { theme, props, run, closeOverlay } from "herdr";
-import { NAME, mapPath, spacePage, readJson, mapSpace } from "./store.js";
-import { ago } from "./notion.js";
+import { theme, props, run, closeOverlay, setShared } from "herdr";
+import { NAME, MOVE_TO, mapPath, spacePage, readJson, mapSpace } from "./store.js";
+import { ago, canonicalId } from "./notion.js";
 import { ui } from "./ui.js";
 
 const DEBOUNCE = 300;
@@ -15,10 +16,11 @@ const MAX_ROWS = 11;
 export const pickerMethods = {
   initPicker(cx) {
     this.query = props().query ?? "";
+    this.move = props().move ?? null;
     this.items = []; this.at = 0; this.step = "pages"; this.loading = true; this.error = null; this.seq = 0;
     this.scroll = ScrollHandle.new();
     this.handle = cx.focus_handle();
-    this.input = InputState.new({ value: this.query, placeholder: "Search Notion, or type a title to create…" });
+    this.input = InputState.new({ value: this.query, placeholder: this.move ? "Search Notion…" : "Search Notion, or type a title to create…" });
     this.input.on("change", (_e, cx) => {
       this.query = this.input.value(); this.step = "pages"; this.at = 0;
       const seq = ++this.seq;
@@ -55,12 +57,14 @@ export const pickerMethods = {
         if (seq !== this.seq) return;
         this.items = []; this.error = e.message;
       }
-      this.loading = false; this.at = Math.min(this.at, this.rows().length - 1);
+      this.loading = false; this.at = Math.max(0, Math.min(this.at, this.rows().length - 1));
       cx.notify();
     });
   },
 
   rows() {
+    // The note a block moves from is not a place to move it to.
+    if (this.move) return this.items.filter((p) => p.id !== canonicalId(props().from)).map((p) => ({ kind: "page", ...p }));
     if (this.step === "parents") return this.cfg.parents.map((p) => ({ kind: "parent", ...p }));
     return [...this.items.map((p) => ({ kind: "page", ...p })), { kind: "create" }];
   },
@@ -72,6 +76,10 @@ export const pickerMethods = {
   // One choice at a time (`busy`), so a double Enter cannot create two pages or race on map.json.
   choose(row, toPane, cx) {
     if (!row || this.busy) return;
+    if (this.move) {
+      setShared(MOVE_TO, { token: this.move, id: row.id });
+      return closeOverlay(props().overlay);
+    }
     const parents = this.cfg?.parents ?? [];
     if (row.kind === "create" && parents.length > 1) {
       this.step = "parents"; this.at = 0; this.toPane = toPane;
@@ -113,13 +121,14 @@ export const pickerMethods = {
         .when(mapped, (el) => el.child(div().flex_none().text_size(ui.text.tiny).text_color(t.accent).child("this space")))
         .when(Boolean(details), (el) => el.child(div().flex_none().max_w(220).truncate().text_size(ui.text.tiny).text_color(t.dim).child(details)));
     };
-    const heading = this.step === "parents" ? `Create "${this.title()}" in…` : "Notion notes";
-    const hint = this.busy ? "Creating…" : this.loading ? "Loading…" : "↵ panel · ⌘↵ pane";
+    const heading = this.move ? "Move to…" : this.step === "parents" ? `Create "${this.title()}" in…` : "Notion notes";
+    const hint = this.busy ? "Creating…" : this.loading ? "Loading…" : this.move ? "↵ move here" : "↵ panel · ⌘↵ pane";
     return v_flex().id("nn-picker").track_focus(this.handle).w_full().p(18).gap(10).bg(t.popover).text_color(t.foreground).text_size(ui.text.body)
       .on_key_down((e, cx) => {
         if (e.key === "escape") closeOverlay(props().overlay);
-        else if (e.key === "down") this.at = (this.at + 1) % rows.length;
-        else if (e.key === "up") this.at = (this.at + rows.length - 1) % rows.length;
+        // Move to can list no rows at all.
+        else if (e.key === "down") this.at = (this.at + 1) % Math.max(rows.length, 1);
+        else if (e.key === "up") this.at = (this.at + rows.length - 1) % Math.max(rows.length, 1);
         else if (e.key === "enter" && this.step === "parents") this.choose(rows[this.at], false, cx);
         else return;
         this.scroll.scroll_to_item(this.at);

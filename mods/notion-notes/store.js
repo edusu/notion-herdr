@@ -10,6 +10,8 @@ export const NAME = "notion-notes";
 export const REFRESH_EVERY = 30000;
 /** Shared key the picker bumps after it changes map.json. */
 export const MAP_REV = "notion-notes.map";
+/** Shared key the picker answers a block's Move to on: `{ token, id }`, the request's token and the chosen page. */
+export const MOVE_TO = "notion-notes.move";
 const DEFAULTS = { parents: [], datasource: "", ntn: DEFAULT_NTN, scale: 1, font_size: TEXT.body };
 
 export const dir = () => `${appHome()}/notion-notes`;

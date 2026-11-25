@@ -5,12 +5,12 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Editor, EditorState, Input, InputState } from "gpui-base";
 import { exec, theme, settings, props, run, shared, layout, panes, focused, readTextFile } from "herdr";
-import { client, upload, serial, refreshDecision, pageUrl, validId } from "./notion.js";
-import { replaceBlock, appendedPage } from "./blocks.js";
+import { client, upload, serial, refreshDecision, pageUrl, validId, canonicalId } from "./notion.js";
+import { replaceBlock, appendedPage, withoutPage } from "./blocks.js";
 import { pickerMethods } from "./picker.js";
 import { ui, setSizes } from "./ui.js";
 import { readMethods, sourcesChanged, release } from "./read.js";
-import { NAME, MAP_REV, REFRESH_EVERY, dir, mapPath, cachePath, metaPath, uploadPath, draftPath, spaceKey, spacePage, readJson, put, loadSettings, mapSpace } from "./store.js";
+import { NAME, MAP_REV, MOVE_TO, REFRESH_EVERY, dir, mapPath, cachePath, metaPath, uploadPath, draftPath, spaceKey, spacePage, readJson, put, loadSettings, mapSpace } from "./store.js";
 import * as fs from "fs/promises";
 
 const UPLOAD_AFTER = 3000;
@@ -177,6 +177,13 @@ class NotionNotes extends View {
       // A refresh held back by local edits leaves the rename to a later tick.
       if (!hit || this.refresh(cx)) this.renamedSeen = renamedRev;
     }
+    // The picker opened by a block's Move to answers here, under the request's token.
+    const pick = shared(MOVE_TO);
+    if (this.moveReq && pick?.token === this.moveReq.token) {
+      const { block, m } = this.moveReq;
+      this.moveReq = null;
+      if (this.meta === m) this.moveTo(block, pick.id, cx);
+    }
     if (this.reading && this.sourcesSeen !== sourcesChanged()) { this.sourcesSeen = sourcesChanged(); cx.notify(); }
     if (this.dirty && this.editor) this.save(cx);
     if (this.canUpload(this.meta) && Date.now() - this.changedAt >= UPLOAD_AFTER) this.push(this.page, this.meta, false, cx);
@@ -247,18 +254,7 @@ class NotionNotes extends View {
           const place = (text) => replaceBlock(text, block, line) ?? (text ? `${text}\n${line}` : line);
           // The old base would read as a conflict now; with no tag found it stays, and the upload reports it.
           if (found) m.base = remote.markdown;
-          if (this.meta === m) {
-            this.setText(place(this.editor.value()), m);
-            if (found) await this.disk(() => putMeta(id, m));
-            return;
-          }
-          // The note was left meanwhile: its saved copy gets the tag, queued after the save that leaving started.
-          await this.disk(async () => {
-            const text = place(m.savedText);
-            changed(m);
-            await persist(id, m, text);
-            m.savedText = text; m.savedRev = m.rev;
-          });
+          await this.rewrite(id, m, place, found);
         });
         if (this.meta === m) {
           this.errors.page = null;
@@ -268,6 +264,78 @@ class NotionNotes extends View {
         if (this.meta === m) this.errors.page = `Cannot create page: ${e.message}${made ? " (the subpage exists in Notion)" : ""}`;
       }
       this.creating = null;
+      cx.notify();
+    });
+  }
+
+  // Applies `place` to note `m`'s text, inside the upload queue; `based`: `m.base` changed and is saved too.
+  async rewrite(id, m, place, based) {
+    if (this.meta === m) {
+      this.setText(place(this.editor.value()), m);
+      if (based) await this.disk(() => putMeta(id, m));
+      return;
+    }
+    // The note was left meanwhile: its saved copy changes, queued after the save that leaving started.
+    await this.disk(async () => {
+      const text = place(m.savedText);
+      changed(m);
+      await persist(id, m, text);
+      m.savedText = text; m.savedRev = m.rev;
+    });
+  }
+
+  // Moves this note's subpage in `block` to Notion's trash, or under page `to`, then takes its line out of the
+  // note. As in createPage, `base` follows Notion only when its markdown is `base` without that line, or the
+  // upload would report a conflict. A page that is not this note's child (a link to one elsewhere) only loses
+  // its line, so a page elsewhere is never trashed or moved from here.
+  detachPage(block, to, cx) {
+    const id = this.page, m = this.meta;
+    this.creating = { ...block, busy: to ? "Moving page…" : "Deleting page…" };
+    cx.spawn(async (cx) => {
+      try {
+        await this.net(async () => {
+          const child = (await this.api.parent(block.id)) === canonicalId(id);
+          if (!child && to) throw new Error("only a subpage of this note can be moved");
+          let found = false;
+          if (child) {
+            await (to ? this.api.move(block.id, to) : this.api.trash(block.id));
+            const remote = await this.api.get(id).catch(() => null);
+            found = Boolean(remote) && remote.markdown !== m.base && withoutPage(m.base, block.id) === remote.markdown;
+            if (found) m.base = remote.markdown;
+          }
+          await this.rewrite(id, m, (text) => withoutPage(text, block.id), found);
+        });
+        if (to) fetchedAt.delete(to);
+        if (this.meta === m) this.errors.page = null;
+      } catch (e) {
+        if (this.meta === m) this.errors.page = `Cannot ${to ? "move" : "delete"} page: ${e.message}`;
+      }
+      this.creating = null;
+      cx.notify();
+    });
+  }
+
+  // Move to for a top-level block. Text is appended to page `to` first and only then taken out of this note,
+  // so a failure can leave a copy behind but never loses the block; a subpage is moved by Notion itself.
+  moveTo(block, to, cx) {
+    const m = this.meta;
+    cx.spawn(async (cx) => {
+      try {
+        if (!validId(to)) throw new Error("not a Notion page id");
+        // As bin/notion-note-append: writing under the target's unsent edits would force a choice between them.
+        if ((await this.disk(() => readJson(metaPath(to))))?.pending) throw new Error("that page has edits in Herdr not yet uploaded; try again once it shows Synced");
+        if (block.type === "page") return this.detachPage(block, to, cx);
+        if (this.meta !== m || replaceBlock(this.editor.value(), block, null) === null) throw new Error("the block changed meanwhile");
+        await this.net(() => this.api.append(to, block.raw.replace(/^[ \t]+/, "")));
+        // Another view showing that page reads it again on its next tick.
+        fetchedAt.delete(to);
+        const next = this.meta === m ? replaceBlock(this.editor.value(), block, null) : null;
+        if (next === null) throw new Error("it was copied there, but changed here meanwhile; remove it yourself");
+        this.setText(next, m);
+        this.errors.move = null;
+      } catch (e) {
+        if (this.meta === m) this.errors.move = `Cannot move block: ${e.message}`;
+      }
       cx.notify();
     });
   }

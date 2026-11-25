@@ -227,6 +227,22 @@ export function client(exec, ntn) {
     // markdown endpoint's only append); the JSON body travels as one argument.
     append: (id, markdown) => json(["api", `v1/pages/${id}/markdown`, "-X", "PATCH", "-d",
       JSON.stringify({ type: "insert_content", insert_content: { content: markdown, position: { type: "end" } } })]),
+    // The id of the page `id` sits under, canonical, or null when its parent is not a page (a database, a block, the workspace).
+    async parent(id) {
+      if (!validId(id)) throw new Error(`Invalid page id: ${firstLine(id)}`);
+      const p = await json(["api", `v1/pages/${id}`]);
+      return p.parent?.type === "page_id" ? canonicalId(p.parent.page_id) : null;
+    },
+    // Into Notion's trash, where it can be restored: the API does not delete pages outright.
+    async trash(id) {
+      if (!validId(id)) throw new Error(`Invalid page id: ${firstLine(id)}`);
+      await run(ntn, ["api", `v1/pages/${id}`, "-X", "PATCH", "-d", JSON.stringify({ in_trash: true })]);
+    },
+    // Makes page `id` a subpage of page `to` (POST, inferred from the body).
+    async move(id, to) {
+      if (!validId(id) || !validId(to)) throw new Error(`Invalid page id: ${firstLine(validId(id) ? to : id)}`);
+      await run(ntn, ["api", `v1/pages/${id}/move`, "-d", JSON.stringify({ parent: { type: "page_id", page_id: to } })]);
+    },
     // Never pass --allow-deleting-content: child pages and databases must survive an edit.
     // The page's markdown right after the edit, or null when the output does not carry it whole.
     async edit(id, file) {

@@ -8,7 +8,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { client, upload, serial, titleOf, refreshDecision, pages, ago, pageUrl, readable, mappedPage, sourceNames, canonicalId, propertyValue } from "../mods/notion-notes/notion.js";
 import { ui, setSizes, TEXT, BOX, ICON } from "../mods/notion-notes/ui.js";
-import { parseBlocks, children, todos, toggleTodo, cell, replaceBlock, insertAfter, moveBlock, retype, continuation, slashQuery, commands, editParts, nextEditable, appendedPage, editableCell } from "../mods/notion-notes/blocks.js";
+import { parseBlocks, children, todos, toggleTodo, cell, replaceBlock, insertAfter, moveBlock, retype, continuation, slashQuery, commands, editParts, nextEditable, appendedPage, editableCell, fromBreaks, toBreaks, withoutPage, blockActions } from "../mods/notion-notes/blocks.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ntn = join(here, "fake-ntn.mjs");
@@ -165,6 +165,39 @@ test("after creating a page, the block's text is replaced by its tag and the upl
   assert.equal(text, `intro\n${tag}\noutro`);
   assert.deepEqual(await upload(api, ID, text, remote.markdown, file, write), { base: text });
   assert.equal(state().pages[ID].markdown, text);
+});
+
+test("withoutPage takes out only the top-level line of that page", () => {
+  const other = '<page url="https://app.notion.com/p/00000000000000000000000000000002">Other</page>';
+  const nested = `<callout>\n\t${TAG}\n</callout>`;
+  assert.equal(withoutPage(`a\n${TAG}\n${other}\n${nested}`, NEW_ID), `a\n${other}\n${nested}`);
+  assert.equal(withoutPage(nested, NEW_ID), nested);
+  assert.equal(withoutPage("a\nb", NEW_ID), "a\nb");
+  assert.equal(withoutPage(TAG, NEW_ID.replace(/-/g, "")), "");
+});
+
+test("trashing a subpage takes its tag out of the parent, so base follows and the note uploads without a conflict", async () => {
+  reset({ pages: { [ID]: { title: "t", markdown: "intro" } } });
+  const made = await api.create("Child", `page:${ID}`);
+  const base = (await api.get(ID)).markdown;
+  assert.equal(await api.parent(made.id), ID);
+  assert.equal(await api.parent(ID), null);
+  await api.trash(made.id);
+  const remote = (await api.get(ID)).markdown;
+  assert.equal(withoutPage(base, made.id), remote);
+  assert.deepEqual(await upload(api, ID, withoutPage(base, made.id), remote, file, write), { base: "intro" });
+  await assert.rejects(api.trash("nope"), /Invalid page id/);
+});
+
+test("moving a subpage puts its tag under the new parent", async () => {
+  const OTHER = "c0ffee00-1234-4abc-8def-0123456789ac";
+  reset({ pages: { [ID]: { title: "t", markdown: "a" }, [OTHER]: { title: "o", markdown: "b" } } });
+  const made = await api.create("Child", `page:${ID}`);
+  await api.move(made.id, OTHER);
+  assert.equal(await api.parent(made.id), OTHER);
+  assert.equal(state().pages[ID].markdown, "a");
+  assert.equal(state().pages[OTHER].markdown, `b\n<page url="https://app.notion.com/p/${made.id.replace(/-/g, "")}">Child</page>`);
+  await assert.rejects(api.move(made.id, "../x"), /Invalid page id: \.\.\/x/);
 });
 
 test("an upload without the new page's tag is refused by Notion", async () => {
@@ -864,6 +897,36 @@ test("editParts prefix plus text is always the block's raw line", () => {
     const e = editParts(b);
     if (e && b.type !== "blank") assert.equal(e.prefix + e.text, b.raw);
   }
+});
+
+test("a <br> inside a block is a newline in the field and is written back as <br>, so the block stays one line", () => {
+  const [b] = parseBlocks("- [ ] buy milk<br>and bread<br/>today");
+  const { prefix, text } = editParts(b);
+  assert.equal(fromBreaks(text), "buy milk\nand bread\ntoday");
+  assert.equal(prefix + toBreaks(fromBreaks(text)), "- [ ] buy milk<br>and bread<br>today");
+  assert.equal(fromBreaks("a<BR />b<br>c"), "a\nb\nc");
+  assert.equal(toBreaks("a\r\nb\n"), "a<br>b<br>");
+  assert.deepEqual(parseBlocks(`x\n${toBreaks("one\ntwo")}\ny`).map((x) => x.type), ["paragraph", "paragraph", "paragraph"]);
+  // A paragraph that starts with a line break is still a paragraph, not a tag.
+  const [lead] = parseBlocks(toBreaks("\nafter"));
+  assert.deepEqual([lead.type, fromBreaks(editParts(lead).text)], ["paragraph", "\nafter"]);
+});
+
+test("the block menu offers what applies to each block, and its edits touch only that block's lines", () => {
+  const db = '<database url="https://app.notion.com/p/00000000000000000000000000000003">D</database>';
+  const text = `# T\n> a<br>b\n${TAG}\n${db}\n<callout>\n\t${TAG}\n</callout>\n\n\`\`\`\ncode\n\`\`\``;
+  const [h, q, p, d, call, blank, code] = parseBlocks(text);
+  const offers = (b) => Object.keys(blockActions(b)).filter((k) => blockActions(b)[k]);
+  assert.deepEqual(offers(h), ["turn", "duplicate", "move", "delete"]);
+  assert.deepEqual(offers(q), ["turn", "duplicate", "move", "delete"]);
+  assert.deepEqual(offers(p), ["open", "move", "delete"]);
+  assert.deepEqual([offers(d), offers(call)], [[], []]);
+  assert.deepEqual(offers(blank), ["delete"]);
+  assert.deepEqual(offers(code), ["duplicate", "move", "delete"]);
+  assert.equal(insertAfter(text, code, code.raw), `${text}\n${code.raw}`);
+  assert.equal(insertAfter(text, h, h.raw).split("\n").slice(0, 3).join("\n"), "# T\n# T\n> a<br>b");
+  assert.equal(replaceBlock(text, q, null), text.replace("> a<br>b\n", ""));
+  assert.equal(replaceBlock(text, q, retype(q.raw, "bullet")), text.replace("> a<br>b", "- a<br>b"));
 });
 
 test("nextEditable finds the closest editable block before or after a line", () => {
