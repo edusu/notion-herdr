@@ -83,8 +83,16 @@ export const readMethods = {
     // Enter reaches submit after the wrapper's key handler, so an open menu is settled here.
     // Shift-Enter is the field's own line break: a submit it may also send must not start a block.
     state.on("submit", (e, cx) => {
-      if (this.editing?.state !== state || e?.shift) return;
-      const pick = this.menu()[this.editing.slash?.at];
+      const ed = this.editing;
+      if (ed?.state !== state || e?.shift) return;
+      // Enter has already put its newline at the cursor: left in, the block would end in a `<br>`.
+      const at = state.selected_range(), value = state.value(), slash = ed.slash;
+      if (at.start === at.end && value[at.start - 1] === "\n") {
+        state.set_value(value.slice(0, at.start - 1) + value.slice(at.start));
+        // The change this may send must not close the open menu.
+        ed.last = state.value(); ed.slash = slash;
+      }
+      const pick = this.menu()[ed.slash?.at];
       if (pick) this.command(pick.id, cx); else this.enter(cx);
       cx.notify();
     });
@@ -550,7 +558,7 @@ export const readMethods = {
               .when(!ro, (el) => el.cursor_pointer())
               .when(on, (el) => el.child(div().text_size(ui.text.tiny).text_color(t.accent_foreground).child("✓"))))
             .when(Boolean(block.label) || editable, (el) => el.child(inPlace(div().flex_1().min_w(0).min_h(ui.size.line).text_color(on ? t.dim : t.foreground)
-              .when(Boolean(block.label), (d) => d.child(md(id, on ? `~~${breaks(block.label.trim())}~~` : breaks(block.label)))))));
+              .when(Boolean(block.label), (d) => d.child(md(id, on ? `~~${breaks(fromBreaks(block.label).trim())}~~` : breaks(block.label)))))));
         }
         case "bullet":
         case "numbered":
