@@ -8,7 +8,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { client, upload, serial, titleOf, refreshDecision, pages, ago, pageUrl, readable, mappedPage, sourceNames, canonicalId, propertyValue } from "../mods/notion-notes/notion.js";
 import { ui, setSizes, TEXT, BOX, ICON } from "../mods/notion-notes/ui.js";
-import { parseBlocks, children, todos, toggleTodo, cell, replaceBlock, insertAfter, moveBlock, retype, continuation, slashQuery, commands, editParts, nextEditable, appendedPage, editableCell, fromBreaks, toBreaks, withoutPage, blockActions } from "../mods/notion-notes/blocks.js";
+import { parseBlocks, children, todos, toggleTodo, cell, replaceBlock, insertAfter, moveBlock, retype, continuation, slashQuery, commands, editParts, nextEditable, appendedPage, editableCell, fromBreaks, toBreaks, withoutPage, blockActions, indentBlock } from "../mods/notion-notes/blocks.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ntn = join(here, "fake-ntn.mjs");
@@ -878,6 +878,29 @@ test("editParts splits an editable one-line block into its markdown prefix and i
   assert.deepEqual(parts("- "), { prefix: "- ", text: "" });
   assert.deepEqual(parts("- [ ] "), { prefix: "- [ ] ", text: "" });
   assert.deepEqual(parts("-  two spaces "), { prefix: "- ", text: " two spaces " });
+});
+
+test("an empty to-do as Notion writes it, without the space after the box, is a to-do whose prefix gets that space", () => {
+  const [b] = parseBlocks("\t- [ ]");
+  assert.deepEqual([b.type, b.label, b.done, b.depth], ["todo", "", false, 1]);
+  assert.deepEqual(editParts(b), { prefix: "\t- [ ] ", text: "" });
+  assert.equal(toggleTodo("\t- [ ]", 0, ""), "\t- [x]");
+});
+
+test("indentBlock nests a block and its children under the block above, and takes them out again", () => {
+  const text = "- [ ] a\n- [ ] b\n\t- [ ] c\nplain\n# H\nafter";
+  const at = (t, line) => parseBlocks(t).find((b) => b.from === line);
+  const inner = "- [ ] a\n\t- [ ] b\n\t\t- [ ] c\nplain\n# H\nafter";
+  assert.equal(indentBlock(text, at(text, 1), 1), inner);
+  assert.equal(indentBlock(inner, at(inner, 1), -1), text);
+  assert.equal(indentBlock("a\n  b", at("a\n  b", 1), -1), "a\nb");
+  // Nothing above to go under, already one level below it, at the left edge, or not a block that nests.
+  assert.equal(indentBlock(text, at(text, 0), 1), text);
+  assert.equal(indentBlock(inner, at(inner, 2), 1), inner);
+  assert.equal(indentBlock(text, at(text, 3), -1), text);
+  assert.equal(indentBlock(text, at(text, 4), 1), text);
+  assert.equal(indentBlock(text, at(text, 5), 1), text);
+  assert.equal(indentBlock(text, { ...at(text, 1), raw: "- [ ] old" }, 1), null);
 });
 
 test("editParts gives blank and empty blocks an empty prefix, so typing replaces the whole line", () => {

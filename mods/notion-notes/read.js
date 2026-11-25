@@ -6,9 +6,11 @@ import { theme, run, openOverlay } from "herdr";
 import { NAME, REFRESH_EVERY } from "./store.js";
 import { ui } from "./ui.js";
 import { readable } from "./notion.js";
-import { parseBlocks, children, toggleTodo, cell, replaceBlock, insertAfter, moveBlock, retype, continuation, editParts, nextEditable, slashQuery, commands, editableCell, fromBreaks, toBreaks, blockActions } from "./blocks.js";
+import { parseBlocks, children, toggleTodo, cell, replaceBlock, insertAfter, moveBlock, retype, continuation, editParts, nextEditable, slashQuery, commands, editableCell, fromBreaks, toBreaks, blockActions, indentBlock } from "./blocks.js";
 
 const INDENT = 18;
+/** The key context of the open field and the actions Tab and Shift-Tab are bound to in it. */
+export const FIELD = "NotionNotesField", INDENT_IN = "notion_notes_indent", INDENT_OUT = "notion_notes_outdent";
 // The open field grows with its wrapped lines up to this many, then scrolls.
 const FIELD_ROWS = 100;
 
@@ -198,12 +200,25 @@ export const readMethods = {
 
   enter(cx) {
     const { block, state, prefix } = this.editing;
-    if (!state.value() && LISTS.has(block.type)) return this.swap(retype(prefix, "paragraph"), cx);
+    if (!state.value() && LISTS.has(block.type)) return block.depth ? this.indent(-1, cx) : this.swap(retype(prefix, "paragraph"), cx);
     if (!this.commit()) return;
     const cur = this.blocks().find((b) => b.from === block.from);
     // The draft opened a block that takes the lines below (a code fence, a table, a toggle): nothing is inserted.
     if (!cur || cur.to !== cur.from) return this.closeEdit(cx);
     if (this.apply(insertAfter(this.editor.value(), cur, continuation(cur)))) this.openAt(cur.to + 1, cx);
+  },
+
+  // Saves the open block, nests it one level in or out with its children, and keeps editing it at the same cursor.
+  indent(step, cx) {
+    const { block, state } = this.editing, value = state.value(), at = state.selected_range();
+    if (!this.commit()) return;
+    const text = this.editor.value(), cur = this.blocks().find((b) => b.from === block.from);
+    // A line a click below the note opened is not in the note yet.
+    if (!cur) return;
+    const next = indentBlock(text, cur, step);
+    if (next !== text && !this.apply(next)) return;
+    this.openAt(cur.from, cx);
+    if (this.editing?.text === value) this.editing.state.set_selected_range(at);
   },
 
   backspace(cx) {
@@ -262,6 +277,7 @@ export const readMethods = {
     const ed = this.editing, items = this.menu();
     return v_flex().flex_1().min_w(0).gap(2)
       .child(Popup.new("nn-slash", h_flex().id("nn-field").w_full().min_w(0).track_focus(this.fieldFocus).on_key_down((e, cx) => this.fieldKey(e, cx))
+        .key_context(FIELD).on_action(INDENT_IN, (_e, cx) => { this.indent(1, cx); cx.notify(); }).on_action(INDENT_OUT, (_e, cx) => { this.indent(-1, cx); cx.notify(); })
         .child(Textarea.new(ed.state).flex_1().min_w(0).text_size(size).text_color(t.foreground))).anchor("bottom_left").w_full().min_w(0)
         .when(items.length > 0, (el) => el.content(menuBox("nn-menu", ui.size.menu, t)
           .children(items.map((c, i) => menuRow(`nn-cmd-${c.id}`, i === ed.slash.at, t).text_size(ui.text.small).text_color(t.foreground)
@@ -534,7 +550,7 @@ export const readMethods = {
               .when(!ro, (el) => el.cursor_pointer())
               .when(on, (el) => el.child(div().text_size(ui.text.tiny).text_color(t.accent_foreground).child("✓"))))
             .when(Boolean(block.label) || editable, (el) => el.child(inPlace(div().flex_1().min_w(0).min_h(ui.size.line).text_color(on ? t.dim : t.foreground)
-              .when(Boolean(block.label), (d) => d.child(md(id, on ? `~~${breaks(block.label)}~~` : breaks(block.label)))))));
+              .when(Boolean(block.label), (d) => d.child(md(id, on ? `~~${breaks(block.label.trim())}~~` : breaks(block.label)))))));
         }
         case "bullet":
         case "numbered":

@@ -9,7 +9,7 @@ import { client, upload, serial, refreshDecision, pageUrl, validId, canonicalId 
 import { replaceBlock, appendedPage, withoutPage } from "./blocks.js";
 import { pickerMethods } from "./picker.js";
 import { ui, setSizes } from "./ui.js";
-import { readMethods, sourcesChanged, release } from "./read.js";
+import { readMethods, sourcesChanged, release, FIELD, INDENT_IN, INDENT_OUT } from "./read.js";
 import { NAME, MAP_REV, MOVE_TO, REFRESH_EVERY, dir, mapPath, cachePath, metaPath, uploadPath, draftPath, spaceKey, spacePage, readJson, put, loadSettings, mapSpace } from "./store.js";
 import * as fs from "fs/promises";
 
@@ -87,6 +87,12 @@ class NotionNotes extends View {
     this.conflict = null; this.creating = null; this.errors = {}; this.gen = 0; this.changedAt = 0;
     try { this.reading = localStorage.getItem("view") !== "edit"; } catch { this.reading = true; }
     this.setup.catch((e) => { this.errors.settings = `Settings in mod.json: ${e.message}`; cx.notify(); });
+    // The app's Tab moves focus before a key handler sees it, so the open field gets bindings of its own.
+    try {
+      cx.bind_keys([FIELD, `${FIELD} > Input`].flatMap((context) => [
+        { keystroke: "tab", action: INDENT_IN, context }, { keystroke: "shift-tab", action: INDENT_OUT, context },
+      ]));
+    } catch {}
     cx.timer.every(800, (cx) => this.tick(cx));
     // Emptied rather than removed once taken, so only one view shows it.
     this.setup.then(() => this.disk(async () => {

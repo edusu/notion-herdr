@@ -6,8 +6,9 @@ import { canonicalId, plainText } from "./notion.js";
 const depthOf = (indent) => indent.replace(/\t/g, "  ").length >> 1;
 
 const todoLine = (l) => {
-  const m = /^(\s*)[-*+] \[([ xX])\] (.*)$/.exec(l);
-  return m && { done: m[2] !== " ", label: m[3], depth: depthOf(m[1]) };
+  // Notion writes an empty to-do without the space after `[ ]`.
+  const m = /^(\s*)[-*+] \[([ xX])\](?: (.*))?$/.exec(l);
+  return m && { done: m[2] !== " ", label: m[3] ?? "", depth: depthOf(m[1]) };
 };
 
 // Containers whose children the read view draws; any other tag stays opaque.
@@ -216,6 +217,22 @@ export function moveBlock(text, block, before) {
   return lines.join("\n");
 }
 
+/**
+ * `text` with `block` and the deeper blocks right below it (its children) one level further in
+ * (`step` 1) or out (-1). `text` itself when the block cannot nest (only paragraphs and list items
+ * do), has no block above to go under, or is already at the left edge; null if `block` is stale.
+ */
+export function indentBlock(text, block, step) {
+  const lines = linesOf(text, block);
+  if (!lines) return null;
+  const blocks = parseBlocks(text), i = blocks.findIndex((b) => b.from === block.from), b = blocks[i];
+  if (b?.depth === undefined || (step > 0 ? !(blocks[i - 1]?.depth >= b.depth) : b.depth === 0)) return text;
+  let end = i;
+  while (blocks[end + 1]?.depth > b.depth) end++;
+  for (let l = b.from; l <= blocks[end].to; l++) lines[l] = step > 0 ? `\t${lines[l]}` : lines[l].replace(/^(\t| {1,2})/, "");
+  return lines.join("\n");
+}
+
 const indentOf = (l) => /^\s*/.exec(l)[0];
 const PREFIX = { paragraph: "", h1: "# ", h2: "## ", h3: "### ", todo: "- [ ] ", bullet: "- ", numbered: "1. ", quote: "> " };
 // Only these keep their indentation: the parser reads a heading or a quote only when unindented.
@@ -262,7 +279,8 @@ export function editParts(block) {
   if (type === "blank" || type === "empty") return { prefix: "", text: "" };
   if (!ONE_LINE.has(type) || block.to !== block.from) return null;
   const text = type === "todo" ? block.label : block.text;
-  return { prefix: block.raw.slice(0, block.raw.length - text.length), text };
+  const prefix = block.raw.slice(0, block.raw.length - text.length);
+  return { prefix: type === "todo" && !prefix.endsWith(" ") ? `${prefix} ` : prefix, text };
 }
 
 const BR = /<br\s*\/?>/gi;

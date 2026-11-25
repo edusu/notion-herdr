@@ -47,6 +47,9 @@ changes the note in the ways below; everything else needs Markdown. Read-only no
     empty list item it turns the item into a paragraph.
   - `Shift+Enter` adds a line break inside the block. Notion's markdown writes it as `<br>` within the
     block's one line; Read draws it as a line break and the field shows it as a new line.
+  - `Tab` nests the block one level under the block above, with the blocks already nested under it;
+    `Shift+Tab` takes it one level out, and so does `Enter` on an empty nested list item. Only paragraphs
+    and list items nest, as tab-indented lines in Notion's markdown.
   - `Backspace` on an empty field turns a list item, heading or quote into a paragraph, and
     deletes an empty paragraph, moving into the end of the block above.
   - A click in the space below the last block writes at the end of the note. The new line is only
