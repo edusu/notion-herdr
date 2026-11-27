@@ -4,7 +4,7 @@
 // The save chain is adapted from tab-notes in ozcberkay/herdr-coban (Apache-2.0).
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Editor, EditorState, Input, InputState } from "gpui-base";
-import { exec, theme, settings, props, run, shared, layout, panes, focused, readTextFile, notify } from "herdr";
+import { exec, theme, settings, props, run, shared, layout, panes, focused, readTextFile, notify, window } from "herdr";
 import { client, upload, serial, refreshDecision, pageUrl, validId, canonicalId } from "./notion.js";
 import { replaceBlock, appendedPage, withoutPage } from "./blocks.js";
 import { pickerMethods } from "./picker.js";
@@ -173,7 +173,8 @@ class NotionNotes extends View {
     const tab = this.mode === "pane" && focused()?.tab;
     const shown = this.mode === "panel" ? shownIn(layout()) && spaceKey() === this.key
       : tab && panes().some((p) => p.mod === NAME && p.tab === tab);
-    if (shown) this.refresh(cx);
+    // No reads while the OS window is not presented; the next tick after it returns catches up.
+    if (shown && window()?.visible !== false) this.refresh(cx);
     // A read-only second view takes the note over once the view that edited it is gone.
     if (this.meta?.elsewhere && !owners.has(this.page)) this.open(this.page, cx);
     if (this.renamedSeen !== renamedRev) {
